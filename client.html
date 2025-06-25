@@ -2,7 +2,7 @@
 <html>
 <body>
 <button id="start">Start</button>
-<button id="stop">Stop</button>
+<button id="stop" disabled>Stop</button>
 <pre id="log"></pre>
 <script>
 let ws, rec;
@@ -10,14 +10,21 @@ const log = document.getElementById('log');
 const start = document.getElementById('start');
 const stop = document.getElementById('stop');
 start.onclick = async () => {
+  start.disabled = true;
+  stop.disabled = false;
   const stream = await navigator.mediaDevices.getUserMedia({audio: true});
-  rec = new MediaRecorder(stream);
+  rec = new MediaRecorder(stream, {mimeType: 'audio/webm'});
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = e => { log.textContent += e.data + '\n'; };
-  rec.ondataavailable = e => ws.send(e.data);
-  rec.start(1000);
+  rec.ondataavailable = e => { if (ws.readyState === WebSocket.OPEN) ws.send(e.data); };
+  rec.start(500);
 };
-stop.onclick = () => { rec.stop(); ws.close(); };
+stop.onclick = () => {
+  stop.disabled = true;
+  start.disabled = false;
+  rec.stop();
+  ws.close();
+};
 </script>
 </body>
 </html>

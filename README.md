@@ -34,6 +34,8 @@ This script automates **accurate** & **fast** transcription of long recordings
 pip install "openai>=1.0" openai-whisper pydub tqdm httpx torch
 # Optional diarization dependencies
 pip install pyannote.audio soundfile
+# Optional realtime/web dependencies
+pip install sounddevice fastapi uvicorn
 
 # macOS FFmpeg (Linux: apt, Windows: choco/scoop)
 brew install ffmpeg
@@ -70,6 +72,19 @@ python script.py interview.flac out.txt \
        --mode local --local-model tiny --timestamps
 ```
 
+### Realtime microphone (terminal)
+
+```bash
+python realtime.py live.txt
+```
+
+### Realtime microphone via browser
+
+```bash
+python realtime.py live.txt --web
+# then open http://localhost:8000 in your browser
+```
+
 ---
 
 ## CLI Arguments
@@ -84,6 +99,21 @@ python script.py interview.flac out.txt \
 | `--language ISO`     | auto                | Whisper language code (`en`, `it`, …)                   |
 | `--timestamps`       | _off_               | Include start‑end timestamp per line                    |
 | `--aggregate`        | _off_               | Merge consecutive lines from same speaker               |
+
+---
+
+## `realtime.py` CLI
+
+| Flag            | Default | Description                                 |
+| --------------- | ------- | ------------------------------------------- |
+| `output_file`   |  –      | Where to save the transcript                |
+| `--mode`        | `api`   | Same as `script.py` (`api` or `local`)      |
+| `--local-model` | `base`  | Whisper checkpoint for local mode           |
+| `--diarize`     | _off_   | Speaker detection                           |
+| `--language`    | auto    | Force language                              |
+| `--timestamps`  | _off_   | Include timestamps                          |
+| `--aggregate`   | _off_   | Merge consecutive lines                     |
+| `--web`         | _off_   | Serve browser client instead of local mic   |
 
 ---
 
