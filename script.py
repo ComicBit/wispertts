@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import tempfile
 import subprocess
 from io import BytesIO
@@ -9,8 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import openai
 import torch
 from pydub import AudioSegment
-from tqdm import tqdm, trange
-import time
+from tqdm import tqdm
 
 # -------- Configuration --------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "your-api-key-here"
@@ -21,11 +21,14 @@ MAX_WHISPER_MB = 25
 SAFETY_MARGIN = 0.95
 TARGET_BYTES = int(MAX_WHISPER_MB * 1_048_576 * SAFETY_MARGIN)
 BITRATE_KBPS = 128
-SECONDS_LIMIT = int(TARGET_BYTES / (BITRATE_KBPS/8*1024))
+SECONDS_LIMIT = int(TARGET_BYTES / (BITRATE_KBPS / 8 * 1024))
+
 
 def print_and_flush(msg):
     print(msg, flush=True)
 
+
+# Spinner for quick steps
 class Spinner:
     def __init__(self, desc="Working…"):
         self.desc = desc
@@ -36,6 +39,7 @@ class Spinner:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.pbar.update(1)
         self.pbar.close()
+
 
 # -------- Convert Audio --------
 def convert_to_mp3(input_path: str) -> str:
@@ -48,17 +52,19 @@ def convert_to_mp3(input_path: str) -> str:
     print_and_flush(f"[OK] ffmpeg MP3 created: {output_path}")
     return output_path
 
+
 # -------- Helpers --------
 def seg_to_bytes(seg: AudioSegment, fmt="mp3") -> bytes:
     buf = BytesIO()
     seg.export(buf, format=fmt, bitrate=f"{BITRATE_KBPS}k")
     return buf.getvalue()
 
+
 # -------- Silence Removal --------
 def remove_silence(path: str) -> AudioSegment:
     out_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
     filt = (
-        "silenceremove=start_periods=1:start_duration=0.3:start_threshold=-50dB:"  
+        "silenceremove=start_periods=1:start_duration=0.3:start_threshold=-50dB:"
         "stop_periods=-1:stop_duration=0.3:stop_threshold=-50dB"
     )
     with Spinner(desc="[STEP] Removing silence…"):
@@ -71,6 +77,7 @@ def remove_silence(path: str) -> AudioSegment:
     print_and_flush(f"[OK] Silence-removed MP3 ready: {out_path}")
     os.unlink(out_path)
     return cleaned
+
 
 # -------- Chunking for Whisper --------
 def chunk_audio(audio: AudioSegment) -> List[str]:
@@ -104,6 +111,7 @@ def chunk_audio(audio: AudioSegment) -> List[str]:
     print_and_flush(f"[OK] Chunking complete. {len(paths)} chunk(s) ready.")
     return paths
 
+
 # -------- Parallel Transcription --------
 def transcribe_paths(client: openai.OpenAI, paths: List[str], model: str = "whisper-1") -> List[str]:
     texts = [None] * len(paths)
@@ -135,6 +143,82 @@ def transcribe_paths(client: openai.OpenAI, paths: List[str], model: str = "whis
                 pbar.update(1)
     print_and_flush(f"[OK] All chunks transcribed.")
     return texts
+
+
+# -------- Diarization & Speaker Identification --------
+def diarize_and_transcribe(
+    cleaned_audio: AudioSegment,
+    output_txt: str,
+    model: str = "whisper-1"
+):
+    try:
+        from pyannote.audio import Pipeline
+    except ImportError:
+        print_and_flush("[FATAL] pyannote.audio is required for diarization. Install with 'pip install pyannote.audio'")
+        raise
+
+    # Export to WAV for diarization (pyannote best supports wav)
+    wav_path = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name
+    cleaned_audio.export(wav_path, format="wav")
+
+    device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+    print_and_flush(f"[STEP] Running speaker diarization on device: {device}")
+
+    try:
+        pipeline = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-3.1",
+            use_auth_token=HUGGINGFACE_TOKEN
+        )
+        pipeline.to(device)
+        diarization = pipeline(wav_path)
+    except Exception as e:
+        print_and_flush(f"[FATAL] Diarization failed: {e}")
+        raise
+
+    audio = AudioSegment.from_wav(wav_path)
+    speaker_map = {}  # assign Speaker 1, Speaker 2, etc.
+    speaker_counter = 1
+    result_lines = []
+
+    print_and_flush("[STEP] Extracting segments and transcribing…")
+    # List to ensure stable tqdm
+    diarization_segments = list(diarization.itertracks(yield_label=True))
+    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+    for turn, _, speaker in tqdm(diarization_segments, desc="[STEP] Diarized Segments", unit="segment"):
+        seg_length = turn.end - turn.start
+        if seg_length < 0.11:  # Whisper API minimum is 0.1s
+            print_and_flush(f"[SKIP] Segment ({turn.start:.2f}-{turn.end:.2f}) too short ({seg_length:.3f}s), skipping.")
+            continue
+        if speaker not in speaker_map:
+            speaker_map[speaker] = f"Speaker {speaker_counter}"
+            speaker_counter += 1
+        speaker_name = speaker_map[speaker]
+        # Extract segment
+        seg = audio[int(turn.start * 1000):int(turn.end * 1000)]
+        tmp_seg = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
+        seg.export(tmp_seg, format="mp3")
+        # Transcribe segment
+        try:
+            with open(tmp_seg, "rb") as f:
+                transcript = client.audio.transcriptions.create(
+                    model=model,
+                    file=f,
+                    response_format="text"
+                )
+            transcript_text = transcript.strip()
+            if transcript_text:
+                result_lines.append(f"[{speaker_name}] {transcript_text}")
+        except Exception as e:
+            print_and_flush(f"[FAIL] Whisper transcription failed for segment ({turn.start:.2f}-{turn.end:.2f}): {e}")
+        os.unlink(tmp_seg)
+
+    with open(output_txt, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(result_lines))
+    print_and_flush(f"[SUCCESS] Written diarized transcription to: {os.path.abspath(output_txt)}")
+    os.unlink(wav_path)
+    return os.path.abspath(output_txt)
+
 
 # -------- Main Workflow --------
 def transcribe_file(
@@ -173,31 +257,10 @@ def transcribe_file(
         raise
 
     if diarize:
-        print_and_flush("[STEP] Diarization is enabled.")
         if not HUGGINGFACE_TOKEN:
             print_and_flush("[ERROR] HUGGINGFACE_TOKEN not set. Aborting.")
             raise RuntimeError("Set HUGGINGFACE_TOKEN to accept model licenses.")
-        try:
-            from pyannote.audio import Pipeline
-            if torch.backends.mps.is_available():
-                device = "mps"
-            elif torch.cuda.is_available():
-                device = "cuda"
-            else:
-                device = "cpu"
-            print_and_flush(f"[STEP] Initializing diarization on {device} …")
-            pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                use_auth_token=HUGGINGFACE_TOKEN
-            )
-            pipeline.to(device)
-        except Exception as e:
-            print_and_flush(f"[FATAL] Diarization pipeline error: {e}")
-            raise
-        # [Add diarization logic here if needed]
-        print_and_flush("[TODO] Diarization logic not implemented in this script.")
-        raise NotImplementedError("Diarization logic not yet implemented.")
-
+        return diarize_and_transcribe(cleaned, output_txt)
     else:
         print_and_flush("[STEP] Chunking audio …")
         try:
@@ -224,17 +287,20 @@ def transcribe_file(
             print_and_flush(f"[FATAL] Could not write output file: {e}")
             raise
 
+
 # --- Entry Point ---
 if __name__ == "__main__":
-    import sys
     print_and_flush(f"[BOOT] Script running as __main__ with args: {sys.argv}")
-    if len(sys.argv) < 2:
-        print_and_flush(f"[USAGE] {sys.argv[0]} INPUT_FILE [OUTPUT_FILE]")
-        exit(1)
-    in_file = sys.argv[1]
-    out_file = sys.argv[2] if len(sys.argv) > 2 else "transcription.txt"
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Transcribe audio with optional speaker diarization.")
+    parser.add_argument("input_file", help="Input audio file (wav/mp3/etc.)")
+    parser.add_argument("output_file", nargs="?", default="transcription.txt", help="Output text file")
+    parser.add_argument("--diarize", action="store_true", help="Enable speaker identification/diarization (requires pyannote.audio and HuggingFace token)")
+    args = parser.parse_args()
+
     try:
-        transcribe_file(in_file, out_file)
+        transcribe_file(args.input_file, args.output_file, diarize=args.diarize)
     except Exception as e:
         print_and_flush(f"[FATAL ERROR] Script exited with error: {e}")
         exit(1)
