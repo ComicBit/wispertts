@@ -13,13 +13,25 @@ Features
 """
 
 from __future__ import annotations
-import argparse, itertools, os, re, subprocess, sys, tempfile, threading, time
+import argparse
+import itertools
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from io import BytesIO
 from typing import Optional
-import httpx, torch
+
+import httpx
+import torch
 from pydub import AudioSegment
 from tqdm import tqdm
 import inspect
+import soundfile as sf
 
 # ------------------------------ ENV -----------------------------------------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-api-key-here")
@@ -133,8 +145,6 @@ def patch_torchaudio():
 
     def load(path, *args, backend=None, **kwargs):
         if backend == "soundfile":
-            import soundfile as sf
-
             data, sr = sf.read(path, always_2d=True, dtype="float32")
             return torch.from_numpy(data.T), sr
         return original(path, *args, **kwargs)
@@ -321,21 +331,26 @@ def diarize_tx(audio, *, mode, cli=None, mdl=None, lang):
     except ImportError:
         ProgressHook = None
 
-    wav = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name
-    audio.export(wav, format="wav")
+    buf = BytesIO()
+    audio.export(buf, format="wav")
+    buf.seek(0)
+    data, sr = sf.read(buf, always_2d=True, dtype="float32")
+    waveform = torch.from_numpy(data.T)
+
     device = prefer_device()
     pipe.to(device)
     log(f"[STEP] Diarization on {device}")
 
+    item = {"waveform": waveform, "sample_rate": sr}
     try:
         if ProgressHook:
             with ProgressHook() as hook:
-                diar = pipe(wav, hook=hook)
+                diar = pipe(item, hook=hook)
         else:
             with Spinner("[STEP] Diarization in progress"):
-                diar = pipe(wav)
+                diar = pipe(item)
     finally:
-        os.unlink(wav)
+        buf.close()
 
     limit = SECONDS_LIMIT * 1000
     full = audio
