@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<body>
+<button id="start">Start</button>
+<button id="stop">Stop</button>
+<pre id="log"></pre>
+<script>
+let ws, rec;
+const log = document.getElementById('log');
+const start = document.getElementById('start');
+const stop = document.getElementById('stop');
+start.onclick = async () => {
+  const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+  rec = new MediaRecorder(stream);
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = e => { log.textContent += e.data + '\n'; };
+  rec.ondataavailable = e => ws.send(e.data);
+  rec.start(1000);
+};
+stop.onclick = () => { rec.stop(); ws.close(); };
+</script>
+</body>
+</html>
