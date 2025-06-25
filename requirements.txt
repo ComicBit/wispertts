@@ -9,3 +9,4 @@ pydub==0.25.1
 torch>=2.7.1
 tqdm==4.67.1
 soundfile==0.12.1
+Flask==2.3.2
