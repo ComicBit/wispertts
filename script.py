@@ -2,17 +2,16 @@
 """
 Transcribe an audio file with optional speaker diarization.
 
-New flags
----------
---timestamps     : include [HH:MM:SS-HH:MM:SS] at the beginning of each line
---aggregate      : merge consecutive lines from the same speaker
+New in this version
+-------------------
+• Automatic PyTorch device pick-up (CUDA ➜ MPS ➜ CPU)
 
 Existing features
 -----------------
-* FFmpeg progress bars (conversion & silence removal)
-* pyannote ProgressHook progress bar for diarization
-* Robust concurrency, retries, oversize-segment splitting
-* --language ISO-code forwarded to Whisper
+• --timestamps and --aggregate flags
+• FFmpeg progress bars, pyannote.ProgressHook for diarization
+• Robust concurrency, retries, oversize-segment splitting
+• --language ISO-code forwarded to Whisper
 """
 
 from __future__ import annotations
@@ -37,14 +36,14 @@ from pydub import AudioSegment
 from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "your-api-key-here"
+OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY") or "your-api-key-here"
 HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN", "")
 
-MAX_CONC_REQUESTS      = 4
-PER_REQUEST_TIMEOUT_S  = 90
-MAX_WHISPER_MB         = 25
-SAFETY_MARGIN          = 0.95
-BITRATE_KBPS           = 128
+MAX_CONC_REQUESTS     = 4
+PER_REQUEST_TIMEOUT_S = 90
+MAX_WHISPER_MB        = 25
+SAFETY_MARGIN         = 0.95
+BITRATE_KBPS          = 128
 
 TARGET_BYTES  = int(MAX_WHISPER_MB * 1_048_576 * SAFETY_MARGIN)
 SECONDS_LIMIT = int(TARGET_BYTES / (BITRATE_KBPS / 8 * 1024))
@@ -53,9 +52,17 @@ SECONDS_LIMIT = int(TARGET_BYTES / (BITRATE_KBPS / 8 * 1024))
 def print_and_flush(msg: str):
     print(msg, flush=True)
 
+# ---------------- Device helper ---------------------------------------------
+def select_device() -> torch.device:
+    """CUDA ➜ MPS ➜ CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
 # ---------------- Small UI helpers ------------------------------------------
 class ProgressSpinner:
-    """Fallback spinner for long steps when finer progress unavailable."""
     def __init__(self, desc="Working…"):
         self.desc, self._stop = desc, threading.Event()
         self._thread = threading.Thread(target=self._spin, daemon=True)
@@ -120,17 +127,10 @@ def remove_silence(path: str) -> AudioSegment:
     return audio
 
 def format_ts(seconds: float) -> str:
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = seconds % 60
+    h = int(seconds // 3600); m = int((seconds % 3600) // 60); s = seconds % 60
     return f"{h:02d}:{m:02d}:{s:05.2f}"
 
 def chunk_audio(audio: AudioSegment) -> List[Tuple[str, float, float]]:
-    """
-    Split cleaned audio into ≤ Whisper-sized chunks.
-
-    Returns list of (path, start_seconds, end_seconds)
-    """
     total, limit_ms = len(audio), SECONDS_LIMIT * 1000
     chunks, start_ms = [], 0
     print_and_flush(f"[STEP] Chunking: {total/1000:.1f}s total, {SECONDS_LIMIT}s max/chunk")
@@ -147,26 +147,15 @@ def chunk_audio(audio: AudioSegment) -> List[Tuple[str, float, float]]:
     return chunks
 
 # ---------------- OpenAI call with retry ------------------------------------
-def _whisper_retry(
-    client: openai.OpenAI,
-    path: str,
-    *,
-    model="whisper-1",
-    language=None,
-    timeout_s=PER_REQUEST_TIMEOUT_S,
-    tries=5,
-    base_delay=2,
-) -> str:
+def _whisper_retry(client: openai.OpenAI, path: str, *,
+                   model="whisper-1", language=None, timeout_s=PER_REQUEST_TIMEOUT_S,
+                   tries=5, base_delay=2) -> str:
     for attempt in range(1, tries + 1):
         try:
             with open(path, "rb") as f:
                 return client.audio.transcriptions.create(
-                    model=model,
-                    file=f,
-                    response_format="text",
-                    timeout=timeout_s,
-                    language=language,
-                ).strip()
+                    model=model, file=f, response_format="text",
+                    timeout=timeout_s, language=language).strip()
         except (openai.APITimeoutError, openai.RateLimitError) as e:
             delay = base_delay ** attempt
             print_and_flush(f"[WARN] {e.__class__.__name__} → retry {attempt}/{tries} in {delay}s")
@@ -174,185 +163,108 @@ def _whisper_retry(
     raise RuntimeError("Whisper failed after retries")
 
 # ---------------- Transcription helpers -------------------------------------
-def transcribe_chunks(
-    client: openai.OpenAI,
-    chunks: List[Tuple[str, float, float]],
-    *,
-    model: str,
-    language: Optional[str],
-) -> List[Tuple[str, Optional[str], float, float]]:
-    """
-    Non-diarized transcription.
-
-    Returns list of tuples:
-        (speaker    , text, start, end)
-
-    speaker is None in this mode.
-    """
+def transcribe_chunks(client, chunks, *, model, language):
     results = [None] * len(chunks)
-
-    def worker(i_chunk):
-        i, (path, start, end) = i_chunk
-        txt = _whisper_retry(client, path, model=model, language=language)
-        print_and_flush(f"[OK] Chunk {i + 1}/{len(chunks)} transcribed")
-        return i, txt, start, end
-
+    def worker(i_c):
+        i,(p,st,et) = i_c; txt = _whisper_retry(client,p,model=model,language=language)
+        print_and_flush(f"[OK] Chunk {i+1}/{len(chunks)} transcribed"); return i,None,txt,st,et
     with tqdm(total=len(chunks), desc="[STEP] Transcribing", unit="chunk", ncols=80) as bar, \
          ThreadPoolExecutor(MAX_CONC_REQUESTS) as pool:
-        for fut in as_completed(pool.submit(worker, pair) for pair in enumerate(chunks)):
-            i, txt, start_s, end_s = fut.result()
-            results[i] = (None, txt, start_s, end_s)
-            bar.update(1)
-    return results  # type: ignore
+        for fut in as_completed(pool.submit(worker, ic) for ic in enumerate(chunks)):
+            i,*row = fut.result(); results[i] = tuple(row); bar.update(1)
+    return results  # [(None, text, start, end)]
 
 # ---------------- Diarization + transcription -------------------------------
-def diarize_and_transcribe(
-    cleaned_audio: AudioSegment,
-    *,
-    client: openai.OpenAI,
-    model: str,
-    language: Optional[str],
-) -> List[Tuple[str, str, float, float]]:
-    """
-    Speaker diarization + Whisper.
-
-    Returns list of tuples:
-        (speaker, text, start, end)
-    """
+def diarize_and_transcribe(cleaned_audio, *, client, model, language):
     from pyannote.audio import Pipeline
     try:
         from pyannote.audio.pipelines.utils.hook import ProgressHook
         Hook = ProgressHook
     except Exception:
-        Hook = None  # older pyannote: fall back to spinner
+        Hook = None
 
     wav = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name
     cleaned_audio.export(wav, format="wav")
 
     pipe = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1",
                                     use_auth_token=HUGGINGFACE_TOKEN)
-    device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+    device = select_device()
+    print_and_flush(f"[STEP] Running speaker diarization on device: {device}")
     pipe.to(device)
-    print_and_flush("[STEP] Running speaker diarization")
 
     if Hook:
-        with Hook() as hook:
-            diar = pipe(wav, hook=hook)
+        with Hook() as hook: diar = pipe(wav, hook=hook)
     else:
-        with ProgressSpinner("[STEP] Diarization in progress"):
-            diar = pipe(wav)
+        with ProgressSpinner("[STEP] Diarization in progress"): diar = pipe(wav)
 
     audio_full = AudioSegment.from_wav(wav); os.unlink(wav)
     limit_ms = SECONDS_LIMIT * 1000
-
-    jobs, spk_map, spk_idx = [], {}, 1
-    order = 0
+    jobs, spk_map, spk_idx, order = [], {}, 1, 0
     for turn, _, spk in diar.itertracks(yield_label=True):
-        if (turn.end - turn.start) < 0.11:
-            continue
-        if spk not in spk_map:
-            spk_map[spk] = f"Speaker {spk_idx}"; spk_idx += 1
+        if (turn.end - turn.start) < 0.11: continue
+        spk_map.setdefault(spk, f"Speaker {spk_idx}"); spk_idx = len(spk_map) + 1
         seg = audio_full[int(turn.start*1000):int(turn.end*1000)]
-        for offset_ms in range(0, len(seg), limit_ms):
-            part = seg[offset_ms: offset_ms + limit_ms]
-            start_s = turn.start + offset_ms / 1000
-            end_s   = min(turn.end, start_s + len(part) / 1000)
-            jobs.append((order, spk_map[spk], part, start_s, end_s))
-            order += 1
+        for off in range(0, len(seg), limit_ms):
+            part = seg[off:off+limit_ms]
+            st = turn.start + off/1000; et = min(turn.end, st+len(part)/1000)
+            jobs.append((order, spk_map[spk], part, st, et)); order += 1
 
-    results = [None] * len(jobs)
-
-    def worker(job):
-        idx, speaker, segment, start_s, end_s = job
+    results = [None]*len(jobs)
+    def worker(j):
+        idx,speaker,part,st,et = j
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
-        segment.export(tmp, format="mp3", bitrate=f"{BITRATE_KBPS}k")
-        try:
-            txt = _whisper_retry(client, tmp, model=model, language=language)
-        finally:
-            os.unlink(tmp)
-        return idx, speaker, txt, start_s, end_s
+        part.export(tmp, format="mp3", bitrate=f"{BITRATE_KBPS}k")
+        try: txt = _whisper_retry(client,tmp,model=model,language=language)
+        finally: os.unlink(tmp)
+        return idx,speaker,txt,st,et
 
-    with tqdm(total=len(jobs), desc="[STEP] Transcribing segments", unit="segment", ncols=80) as bar, \
+    with tqdm(total=len(jobs), desc="[STEP] Transcribing segments",
+              unit="segment", ncols=80) as bar, \
          ThreadPoolExecutor(MAX_CONC_REQUESTS) as pool:
-        for fut in as_completed(pool.submit(worker, j) for j in jobs):
-            idx, speaker, txt, start_s, end_s = fut.result()
-            results[idx] = (speaker, txt, start_s, end_s)
-            bar.update(1)
-
-    return results  # type: ignore
+        for fut in as_completed(pool.submit(worker,j) for j in jobs):
+            idx,*row = fut.result(); results[idx] = tuple(row); bar.update(1)
+    return results  # [(spk, txt, start, end)]
 
 # ---------------- Aggregation & formatting ----------------------------------
-def merge_consecutive(
-    rows: List[Tuple[Optional[str], str, float, float]]
-) -> List[Tuple[Optional[str], str, float, float]]:
-    """
-    Merge rows when the speaker (or lack thereof) is identical and contiguous.
-    """
+def merge_consecutive(rows):
     if not rows: return rows
     merged = [list(rows[0])]
-    for spk, txt, st, et in rows[1:]:
-        prev_spk, prev_txt, prev_st, prev_et = merged[-1]
-        if spk == prev_spk:
-            merged[-1][1] = f"{prev_txt} {txt}"
-            merged[-1][3] = et  # extend end time
-        else:
-            merged.append([spk, txt, st, et])
-    return [tuple(r) for r in merged]  # type: ignore
+    for spk,txt,st,et in rows[1:]:
+        p_spk,p_txt,p_st,p_et = merged[-1]
+        if spk == p_spk:
+            merged[-1][1] = f"{p_txt} {txt}"
+            merged[-1][3] = et
+        else: merged.append([spk,txt,st,et])
+    return [tuple(r) for r in merged]
 
-def build_lines(
-    rows: List[Tuple[Optional[str], str, float, float]],
-    *,
-    show_ts: bool,
-) -> List[str]:
-    lines = []
-    for spk, txt, st, et in rows:
+def build_lines(rows, *, show_ts):
+    out=[]
+    for spk,txt,st,et in rows:
         ts = f"[{format_ts(st)}-{format_ts(et)}] " if show_ts else ""
-        if spk:
-            lines.append(f"{ts}[{spk}] {txt}")
-        else:
-            lines.append(f"{ts}{txt}")
-    return lines
+        out.append(f"{ts}[{spk}] {txt}" if spk else f"{ts}{txt}")
+    return out
 
 # ---------------- Orchestrator ----------------------------------------------
-def transcribe_file(
-    input_path: str,
-    output_txt: str = "transcription.txt",
-    *,
-    diarize: bool = False,
-    language: Optional[str] = None,
-    model: str = "whisper-1",
-    show_timestamps: bool = False,
-    aggregate_lines: bool = False,
-) -> str:
-    if OPENAI_API_KEY == "your-api-key-here":
-        raise RuntimeError("Set OPENAI_API_KEY")
+def transcribe_file(input_path, output_txt="transcription.txt", *,
+                    diarize=False, language=None, model="whisper-1",
+                    show_timestamps=False, aggregate_lines=False):
+    if OPENAI_API_KEY == "your-api-key-here": raise RuntimeError("Set OPENAI_API_KEY")
 
     client = openai.OpenAI(api_key=OPENAI_API_KEY,
                            timeout=httpx.Timeout(120, read=PER_REQUEST_TIMEOUT_S),
                            max_retries=3)
 
-    mp3 = convert_to_mp3(input_path)
+    mp3     = convert_to_mp3(input_path)
     cleaned = remove_silence(mp3)
 
     if diarize:
-        rows = diarize_and_transcribe(
-            cleaned_audio=cleaned,
-            client=client,
-            model=model,
-            language=language,
-        )
+        rows = diarize_and_transcribe(cleaned_audio=cleaned,
+                                      client=client, model=model, language=language)
     else:
-        chunks = chunk_audio(cleaned)                     # (path, start, end)
-        rows = transcribe_chunks(
-            client,
-            chunks,
-            model=model,
-            language=language,
-        )
+        chunks = chunk_audio(cleaned)
+        rows   = transcribe_chunks(client, chunks, model=model, language=language)
 
-    if aggregate_lines:
-        rows = merge_consecutive(rows)
-
+    if aggregate_lines: rows = merge_consecutive(rows)
     lines = build_lines(rows, show_ts=show_timestamps)
 
     with open(output_txt, "w", encoding="utf-8") as fh:
@@ -363,30 +275,20 @@ def transcribe_file(
 # ---------------- CLI --------------------------------------------------------
 def main(argv: List[str] | None = None):
     p = argparse.ArgumentParser(description="Transcribe audio with optional speaker diarization.")
-    p.add_argument("input_file")
-    p.add_argument("output_file", nargs="?", default="transcription.txt")
-    p.add_argument("--diarize", action="store_true",
-                   help="Enable speaker diarization (needs pyannote & HF token)")
-    p.add_argument("--language", default=None, metavar="ISO",
+    p.add_argument("input_file"); p.add_argument("output_file", nargs="?", default="transcription.txt")
+    p.add_argument("--diarize",    action="store_true", help="Enable speaker diarization (needs pyannote & HF token)")
+    p.add_argument("--language",   default=None, metavar="ISO",
                    help="Whisper language code (e.g. 'en', 'it'). Empty → auto-detect")
-    p.add_argument("--timestamps", action="store_true",
-                   help="Include [HH:MM:SS-HH:MM:SS] before each line")
-    p.add_argument("--aggregate", action="store_true",
-                   help="Merge consecutive lines from the same speaker")
+    p.add_argument("--timestamps", action="store_true", help="Include [HH:MM:SS-HH:MM:SS] per line")
+    p.add_argument("--aggregate",  action="store_true", help="Merge consecutive lines from same speaker")
     args = p.parse_args(argv)
 
     try:
-        transcribe_file(
-            args.input_file,
-            args.output_file,
-            diarize=args.diarize,
-            language=args.language,
-            show_timestamps=args.timestamps,
-            aggregate_lines=args.aggregate,
-        )
+        transcribe_file(args.input_file, args.output_file,
+                        diarize=args.diarize, language=args.language,
+                        show_timestamps=args.timestamps, aggregate_lines=args.aggregate)
     except Exception as e:
         print_and_flush(f"[FATAL] {e}"); sys.exit(1)
 
 if __name__ == "__main__":
-    print_and_flush(f"[BOOT] {sys.argv}")
-    main()
+    print_and_flush(f"[BOOT] {sys.argv}"); main()
