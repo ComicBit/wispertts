@@ -19,6 +19,7 @@ from typing import Optional
 import httpx, torch
 from pydub import AudioSegment
 from tqdm import tqdm
+import inspect
 
 # ------------------------------ ENV -----------------------------------------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-api-key-here")
@@ -116,9 +117,38 @@ def _run(cmd: list[str], total: Optional[float], desc: str):
             raise subprocess.CalledProcessError(proc.returncode, cmd)
 
 
-def convert(src):
+def patch_torchaudio():
+    """Patch ``torchaudio.load`` for compatibility with pyannote >= 3.1."""
+
+    try:
+        import torchaudio
+    except Exception:
+        return
+
+    sig = inspect.signature(torchaudio.load)
+    if "backend" in sig.parameters:
+        return
+
+    original = torchaudio.load
+
+    def load(path, *args, backend=None, **kwargs):
+        if backend == "soundfile":
+            import soundfile as sf
+
+            data, sr = sf.read(path, always_2d=True, dtype="float32")
+            return torch.from_numpy(data.T), sr
+        return original(path, *args, **kwargs)
+
+    torchaudio.load = load
+
+
+def convert(src: str) -> str:
+    """Return ``src`` if already MP3, otherwise convert and return new file."""
+
+    if src.lower().endswith(".mp3"):
+        return src
+
     dst = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
-    # noqa
     _run(["ffmpeg", "-y", "-i", src, dst], _dur(src), "[STEP] Converting → MP3")
     return dst
 
@@ -144,13 +174,29 @@ def fmt_ts(sec):
     return f"{h:02d}:{m:02d}:{s:05.2f}"
 
 
-def chunk(audio):
+def _estimate_chunks(audio: AudioSegment) -> int:
+    """Estimate number of chunks produced by :func:`chunk`."""
+
+    lim = SECONDS_LIMIT * 1000
+    total = len(audio)
+    start = 0
+    count = 0
+    while start < total:
+        end = min(start + lim, total)
+        if end < total and audio[end - 2000 : end].dBFS < -45:
+            end -= 2000
+        start = end
+        count += 1
+    return count
+
+
+def chunk(audio: AudioSegment):
     lim = SECONDS_LIMIT * 1000
     total = len(audio)
     start = 0
     chunks = []
     with tqdm(
-        total=(total // lim + 1), desc="[STEP] Chunking", unit="chunk", ncols=80
+        total=_estimate_chunks(audio), desc="[STEP] Chunking", unit="chunk", ncols=80
     ) as pb:
         while start < total:
             end = min(start + lim, total)
@@ -247,6 +293,7 @@ def transcribe_chunks(chs, *, mode, cli=None, mdl=None, lang):
 
 # ------------------------------ DIARIZATION ---------------------------------
 def diarize_tx(audio, *, mode, cli=None, mdl=None, lang):
+    patch_torchaudio()
     if not HUGGINGFACE_TOKEN:
         raise RuntimeError(
             "[FATAL] --diarize requested but HUGGINGFACE_TOKEN is not set.\n"
@@ -372,7 +419,8 @@ def run(infile, outfile, *, mode, local_tag, diarize, lang, show_ts, agg):
 
     mp3 = convert(infile)
     cleaned = remove_silence(mp3)
-    os.unlink(mp3)
+    if mp3 != infile:
+        os.unlink(mp3)
     rows = (
         diarize_tx(cleaned, mode=mode, cli=cli, mdl=mdl, lang=lang)
         if diarize
