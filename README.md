@@ -1,122 +1,125 @@
-# Audio Transcription Script with Silence Removal & Chunking
+# Audio → Text CLI (OpenAI Whisper + pyannote)
 
-This script automates the process of transcribing long audio files using OpenAI Whisper API, while optimizing for speed and cost by:
+This script automates **accurate** & **fast** transcription of long recordings while keeping costs predictable.
 
-- **Removing silence** using FFmpeg’s high-performance `silenceremove` filter.
-- **Splitting** cleaned audio into chunks that stay under Whisper’s 25 MB limit (with safety margin).  
-- **Transcribing** chunks in parallel to speed up upload and API response.  
-- **Merging** all partial transcripts into a single text output.
-
----
-
-## Features
-
-- **Fast silence trimming** via FFmpeg (no slow Python loops).  
-- **Automatic chunking** based on file-size constraints and audio bitrate.  
-- **Parallel uploads** with progress bars (using `tqdm` & `concurrent.futures`).  
-- **Single unified transcript** at the end.  
-- **Configurable** thresholds, bitrate assumptions, FFmpeg filter parameters, and worker count.
+- **Silence trimming** with FFmpeg (`silenceremove`).
+- **Smart chunking** under Whisper’s 25 MB / 15 min limit.
+- **Parallel uploads** with built‑in *timeouts* & *auto‑retries*.
+- **(Opt‑in) Speaker diarization** via **pyannote.audio**.
+- **Local **or** OpenAI‑API** inference: device picks CUDA ► MPS ► CPU automatically.
+- **Optional timestamps** and **line aggregation** for cleaner output.
 
 ---
 
-## Prerequisites
+## Key Features
 
-1. **Python 3.7+** installed.  
-2. **FFmpeg** installed and on your PATH:
-   - macOS: `brew install ffmpeg`
-   - Debian/Ubuntu: `sudo apt install ffmpeg`
-   - Windows: download from https://ffmpeg.org
-3. **Python dependencies** (install via pip):
-   ```bash
-   pip install openai pydub tqdm
-   ```
-4. **OpenAI API Key** with Whisper access.  
-   - Set as environment variable:
-     ```bash
-     export OPENAI_API_KEY="sk-..."
-     ```
+| Area                         | What you get                                                   |
+| ---------------------------- | -------------------------------------------------------------- |
+| Silence Removal              | C‑speed trimming before upload – saves money & time           |
+| Chunking                     | Cuts to size, avoids mid‑speech splits, safety margin applied |
+| Concurrency                  | `ThreadPoolExecutor` + progress bars, adjustable pool         |
+| Retries & Rate‑Limits        | Exponential back‑off on `RateLimitError`/timeouts             |
+| Diarization (`--diarize`)    | pyannote 3.1 pipeline with live progress bars                 |
+| Language (`--language de`)   | Force Whisper language instead of auto‑detect                 |
+| Timestamps (`--timestamps`)  | `[HH:MM:SS‑HH:MM:SS]` per line                                |
+| Aggregation (`--aggregate`)  | Merge consecutive lines from the same speaker                 |
+| Device Selection             | CUDA ► MPS ► CPU – no flags needed                             |
+| Local Whisper (`--mode local`)| Run tiny–large‑v3 offline, weight cache in `models/whisper/`  |
 
 ---
 
-## Installation
-
-1. Clone or download this repository/script.  
-2. Ensure `script.py` (the transcription script) is executable or run with Python.  
-3. Verify you can invoke `ffmpeg` from your shell.
-
----
-
-## Configuration
-
-All key parameters live near the top of `script.py`:
-
-- `MAX_WHISPER_MB` and `SAFETY_MARGIN` – define the 25 MB API limit and buffer.  
-- `BITRATE_KBPS` – assumed mp3 bitrate (default 128 kbps).  
-- FFmpeg `silenceremove` filter options:
-  - `start_duration`, `stop_duration` (in seconds) – minimum silence length to trim.  
-  - `threshold` (e.g. `-50dB`) – volume threshold for silence.  
-- `workers` – number of parallel API uploads.
-
-Feel free to tweak these for different file types or quality targets.
-
----
-
-## Usage
-
-Run from the command line:
+## Quick Start
 
 ```bash
-python script.py <input_audio> -o <output_text>
+pip install "openai>=1.0" openai-whisper pydub tqdm httpx torch
+# Optional diarization dependencies
+pip install pyannote.audio soundfile
+
+# macOS FFmpeg (Linux: apt, Windows: choco/scoop)
+brew install ffmpeg
+
+export OPENAI_API_KEY="sk-..."
+# For diarization only ↓
+export HUGGINGFACE_TOKEN="hf_..."
 ```
 
-- `<input_audio>`: path to your source file (mp3, wav, m4a, etc.).  
-- `-o <output_text>`: (optional) path for the final transcript text file. Defaults to `transcription.txt`.
+### Basic transcription (OpenAI API)
 
-**Example:**
 ```bash
-python script.py lecture_recording.mp3 -o lecture.txt
+python script.py meeting.wav output.txt
 ```
 
-The script will log:
-1. **Silence removal** start, output path, and cleaned duration.  
-2. **Chunking** details (duration and size of each piece).  
-3. **Transcription** progress bar for parallel uploads.  
-4. **Final** transcript save location.
+### Force Italian, with timestamps & aggregation
+
+```bash
+python script.py meeting.wav it_meeting.txt \
+       --language it --timestamps --aggregate
+```
+
+### Full diarized transcript (needs HF token)
+
+```bash
+python script.py panel.mp3 panel.txt \
+       --diarize --timestamps --aggregate
+```
+
+### Offline, local tiny model (CUDA/MPS/CPU)
+
+```bash
+python script.py interview.flac out.txt \
+       --mode local --local-model tiny --timestamps
+```
 
 ---
 
-## How It Works
+## CLI Arguments
 
-1. **Silence Removal**  
-   Uses FFmpeg’s `silenceremove` to drop silent segments at the start and within the audio. This is extremely fast (C-based).  
-
-2. **Chunking**  
-   - Computes a maximum time window per chunk based on `TARGET_BYTES` and `BITRATE_KBPS`.  
-   - Slices the cleaned audio into contiguous segments ≤ limit.  
-   - Attempts a small backtrack (~2 s) to avoid cutting mid-speech if the end is noisy.  
-   - Exports each chunk exactly once to MP3, naming them in a temp directory.  
-
-3. **Parallel Transcription**  
-   - Uses `concurrent.futures.ThreadPoolExecutor` to upload & transcribe multiple chunks concurrently.  
-   - Shows a `tqdm` progress bar for chunk uploads and completions.  
-
-4. **Merge & Cleanup**  
-   - Gathers individual transcripts in order.  
-   - Writes a single text file (`-o` argument).  
-   - Deletes temporary chunk files.
+| Flag                 | Default             | Description                                             |
+| -------------------- | ------------------- | ------------------------------------------------------- |
+| `input_file`         |  –                  | Audio file (wav/mp3/aac/…)                              |
+| `output_file`        | `transcription.txt` | Text output                                             |
+| `--mode`             | `api`               | `api` = OpenAI endpoint, `local` = on‑device Whisper    |
+| `--local-model TAG`  | `base`              | Whisper checkpoint (`tiny`, `small.en`, `large‑v3`, …) |
+| `--diarize`          | _off_               | Identify speakers with pyannote                         |
+| `--language ISO`     | auto                | Whisper language code (`en`, `it`, …)                   |
+| `--timestamps`       | _off_               | Include start‑end timestamp per line                    |
+| `--aggregate`        | _off_               | Merge consecutive lines from same speaker               |
 
 ---
 
-## Tuning & Troubleshooting
+## How It Works
 
-- **Too much speech cut?** Increase `stop_duration` or lower `threshold` in the FFmpeg filter.  
-- **Chunks still too big?** Reduce `BITRATE_KBPS` or adjust the safety margin.  
-- **Too slow?** Increase `workers` for more parallel uploads (beware API rate limits).  
-- **FFmpeg errors**: Run `ffmpeg -version` to confirm installation.
+1. **Convert → MP3** – normalises container for predictable size.
+2. **Trim Silence** – `ffmpeg -af silenceremove=…`.
+3. **Chunk** – respects 25 MB limit, backtracks ≤2 s on loud cuts.
+4. **(Optional) Diarize** – pyannote on fastest device with progress hook.
+5. **Transcribe** – parallel Whisper with 90 s timeout, 5× exponential retries.
+6. **Post‑process** – timestamps + optional aggregation.
+
+---
+
+## Tuning
+
+| Knob                    | Where                                    |
+| ----------------------- | -----------------------------------------|
+| Workers                 | `MAX_CONC_REQUESTS` constant (default 4) |
+| Silence sensitivity     | Edit `silenceremove` line in `remove_silence()` |
+| Per‑request timeout     | `PER_REQ_TIMEOUT` constant (seconds)     |
+
+---
+
+## Troubleshooting
+
+| Issue                          | Fix                                                      |
+| ------------------------------ | -------------------------------------------------------- |
+| *CUDA not detected*            | Check `nvidia-smi`; install PyTorch + CUDA toolkit       |
+| `RateLimitError` loops         | Lower workers or request higher OpenAI quota            |
+| `ffmpeg not found`             | Ensure FFmpeg in PATH (`ffmpeg -version`)               |
+| pyannote download/auth errors  | Export valid `HUGGINGFACE_TOKEN`; accept model licence  |
 
 ---
 
 ## License
 
-MIT © Leandro Piccione
+MIT © Leandro Piccione
 
