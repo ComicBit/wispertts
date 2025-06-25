@@ -11,6 +11,7 @@ import openai
 import torch
 from pydub import AudioSegment
 from tqdm import tqdm
+import httpx, time
 
 # -------- Configuration --------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "your-api-key-here"
@@ -22,6 +23,8 @@ SAFETY_MARGIN = 0.95
 TARGET_BYTES = int(MAX_WHISPER_MB * 1_048_576 * SAFETY_MARGIN)
 BITRATE_KBPS = 128
 SECONDS_LIMIT = int(TARGET_BYTES / (BITRATE_KBPS / 8 * 1024))
+MAX_CONCURRENT_REQUESTS = 4
+PER_REQUEST_TIMEOUT_S   = 90
 
 
 def print_and_flush(msg):
@@ -59,6 +62,34 @@ def seg_to_bytes(seg: AudioSegment, fmt="mp3") -> bytes:
     seg.export(buf, format=fmt, bitrate=f"{BITRATE_KBPS}k")
     return buf.getvalue()
 
+def _whisper_with_retry(
+    client: openai.OpenAI,
+    file_path: str,
+    model: str = "whisper-1",
+    timeout_s: int = PER_REQUEST_TIMEOUT_S,
+    max_attempts: int = 5,
+    base_delay: int = 2,
+) -> str:
+    """
+    Call Whisper with a per-request timeout and exponential back-off.
+    Returns plain text (can be empty). Raises on final failure.
+    """
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with open(file_path, "rb") as f:
+                return client.audio.transcriptions.create(
+                    model=model,
+                    file=f,
+                    response_format="text",
+                    timeout=timeout_s,        # overrides client default
+                ).strip()
+        except (openai.APITimeoutError, openai.RateLimitError) as e:
+            delay = base_delay ** attempt
+            print_and_flush(f"[WARN] {e.__class__.__name__}: retry {attempt}/{max_attempts} in {delay}s")
+            time.sleep(delay)
+        except Exception:
+            raise                     # any other error: bubble up
+    raise RuntimeError(f"Whisper failed after {max_attempts} attempts")
 
 # -------- Silence Removal --------
 def remove_silence(path: str) -> AudioSegment:
@@ -113,108 +144,115 @@ def chunk_audio(audio: AudioSegment) -> List[str]:
 
 
 # -------- Parallel Transcription --------
-def transcribe_paths(client: openai.OpenAI, paths: List[str], model: str = "whisper-1") -> List[str]:
+def transcribe_paths(
+    client: openai.OpenAI,
+    paths: List[str],
+    model: str = "whisper-1",
+) -> List[str]:
+    """
+    Transcribe already-chunked paths concurrently.
+    Falls back to original ordering.
+    """
     texts = [None] * len(paths)
+
     def worker(i_p):
-        i, p = i_p
-        try:
-            with open(p, "rb") as f:
-                txt = client.audio.transcriptions.create(
-                    model=model,
-                    file=f,
-                    response_format="text"
-                )
-            print_and_flush(f"[OK] Transcribed chunk {i+1}/{len(paths)}")
-            return i, txt
-        except Exception as e:
-            print_and_flush(f"[FAIL] Transcription failed for chunk {i+1}: {e}")
-            raise
+        i, path = i_p
+        txt = _whisper_with_retry(client, path, model)
+        print_and_flush(f"[OK] Transcribed chunk {i + 1}/{len(paths)}")
+        return i, txt
 
-    with tqdm(total=len(paths), desc="[STEP] Transcribing", unit="chunk") as pbar:
-        with ThreadPoolExecutor() as exe:
-            futures = {exe.submit(worker, (i, p)): i for i, p in enumerate(paths)}
-            for fut in as_completed(futures):
-                try:
-                    i, t = fut.result()
-                    texts[i] = t
-                except Exception as e:
-                    print_and_flush(f"[FAIL] Error in thread transcription: {e}")
-                    raise
-                pbar.update(1)
-    print_and_flush(f"[OK] All chunks transcribed.")
+    with tqdm(total=len(paths), desc="[STEP] Transcribing", unit="chunk") as pbar, \
+         ThreadPoolExecutor(max_workers=MAX_CONCURRENT_REQUESTS) as exe:
+
+        for fut in as_completed([exe.submit(worker, (idx, p)) for idx, p in enumerate(paths)]):
+            i, t = fut.result()
+            texts[i] = t
+            pbar.update(1)
+
+    print_and_flush("[OK] All chunks transcribed.")
     return texts
-
 
 # -------- Diarization & Speaker Identification --------
 def diarize_and_transcribe(
     cleaned_audio: AudioSegment,
     output_txt: str,
-    model: str = "whisper-1"
+    client: openai.OpenAI,
+    model: str = "whisper-1",
 ):
+    """
+    Run speaker diarization, split any over-large segments, send requests
+    concurrently, then re-assemble the transcript in chronological order.
+    """
     try:
         from pyannote.audio import Pipeline
     except ImportError:
         print_and_flush("[FATAL] pyannote.audio is required for diarization. Install with 'pip install pyannote.audio'")
         raise
 
-    # Export to WAV for diarization (pyannote best supports wav)
+    # --- 1. Diarize ---------------------------------------------------------
     wav_path = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name
     cleaned_audio.export(wav_path, format="wav")
 
     device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
     print_and_flush(f"[STEP] Running speaker diarization on device: {device}")
 
-    try:
-        pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
-            use_auth_token=HUGGINGFACE_TOKEN
-        )
-        pipeline.to(device)
-        diarization = pipeline(wav_path)
-    except Exception as e:
-        print_and_flush(f"[FATAL] Diarization failed: {e}")
-        raise
+    pipeline = Pipeline.from_pretrained(
+        "pyannote/speaker-diarization-3.1",
+        use_auth_token=HUGGINGFACE_TOKEN
+    ).to(device)
 
+    diarization = pipeline(wav_path)
     audio = AudioSegment.from_wav(wav_path)
-    speaker_map = {}  # assign Speaker 1, Speaker 2, etc.
-    speaker_counter = 1
-    result_lines = []
 
-    print_and_flush("[STEP] Extracting segments and transcribing…")
-    # List to ensure stable tqdm
-    diarization_segments = list(diarization.itertracks(yield_label=True))
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    # --- 2. Build transcription jobs ---------------------------------------
+    limit_ms = SECONDS_LIMIT * 1000
+    jobs = []                       # (global_order, speaker_name, AudioSegment)
+    speaker_map, speaker_counter = {}, 1
+    order_counter = 0
 
-    for turn, _, speaker in tqdm(diarization_segments, desc="[STEP] Diarized Segments", unit="segment"):
-        seg_length = turn.end - turn.start
-        if seg_length < 0.11:  # Whisper API minimum is 0.1s
-            print_and_flush(f"[SKIP] Segment ({turn.start:.2f}-{turn.end:.2f}) too short ({seg_length:.3f}s), skipping.")
+    for turn, _, speaker in diarization.itertracks(yield_label=True):
+        seg_len = turn.end - turn.start
+        if seg_len < 0.11:          # Whisper hard minimum 0.1 s
             continue
-        if speaker not in speaker_map:
-            speaker_map[speaker] = f"Speaker {speaker_counter}"
-            speaker_counter += 1
-        speaker_name = speaker_map[speaker]
-        # Extract segment
-        seg = audio[int(turn.start * 1000):int(turn.end * 1000)]
-        tmp_seg = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
-        seg.export(tmp_seg, format="mp3")
-        # Transcribe segment
-        try:
-            with open(tmp_seg, "rb") as f:
-                transcript = client.audio.transcriptions.create(
-                    model=model,
-                    file=f,
-                    response_format="text"
-                )
-            transcript_text = transcript.strip()
-            if transcript_text:
-                result_lines.append(f"[{speaker_name}] {transcript_text}")
-        except Exception as e:
-            print_and_flush(f"[FAIL] Whisper transcription failed for segment ({turn.start:.2f}-{turn.end:.2f}): {e}")
-        os.unlink(tmp_seg)
 
+        if speaker not in speaker_map:
+            speaker_map[speaker] = f"Speaker {speaker_counter}"; speaker_counter += 1
+        spk_name = speaker_map[speaker]
+
+        seg = audio[int(turn.start * 1000):int(turn.end * 1000)]
+
+        # split if segment exceeds Whisper’s byte/second ceiling
+        parts = [seg[i:i + limit_ms] for i in range(0, len(seg), limit_ms)]
+        for part in parts:
+            jobs.append((order_counter, spk_name, part))
+            order_counter += 1
+
+    # --- 3. Concurrent Whisper calls ---------------------------------------
+    results = [None] * len(jobs)
+
+    def worker(job):
+        idx, spk, seg = job
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
+        seg.export(tmp, format="mp3")
+        try:
+            text = _whisper_with_retry(client, tmp, model)
+        finally:
+            os.unlink(tmp)
+        return idx, spk, text
+
+    with tqdm(total=len(jobs), desc="[STEP] Transcribing diarized segments", unit="segment") as pbar, \
+         ThreadPoolExecutor(max_workers=MAX_CONCURRENT_REQUESTS) as exe:
+
+        for fut in as_completed([exe.submit(worker, j) for j in jobs]):
+            idx, spk, txt = fut.result()
+            results[idx] = (spk, txt)
+            pbar.update(1)
+
+    # --- 4. Re-assemble & write --------------------------------------------
+    lines = [f"[{spk}] {txt}" for spk, txt in results if txt]
     with open(output_txt, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(result_lines))
+        fh.write("\n".join(lines))
+
     print_and_flush(f"[SUCCESS] Written diarized transcription to: {os.path.abspath(output_txt)}")
     os.unlink(wav_path)
     return os.path.abspath(output_txt)
@@ -228,64 +266,32 @@ def transcribe_file(
 ) -> str:
     print_and_flush(f"[ALIVE] Script launched. Transcribing: {input_path}")
 
-    try:
-        if OPENAI_API_KEY == "your-api-key-here":
-            print_and_flush("[ERROR] OPENAI_API_KEY not set. Aborting.")
-            raise RuntimeError("Set OPENAI_API_KEY environment variable.")
+    # --- OpenAI client with sane defaults & retries ------------------------
+    if OPENAI_API_KEY == "your-api-key-here":
+        raise RuntimeError("Set OPENAI_API_KEY environment variable.")
 
-        print_and_flush("[STEP] Initializing OpenAI client …")
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        print_and_flush("[OK] OpenAI client initialized.")
-    except Exception as e:
-        print_and_flush(f"[FATAL] Could not initialize OpenAI client: {e}")
-        raise
+    client = openai.OpenAI(
+        api_key=OPENAI_API_KEY,
+        timeout=httpx.Timeout(120.0, read=PER_REQUEST_TIMEOUT_S),
+        max_retries=3,
+    )
+    print_and_flush("[OK] OpenAI client initialized.")
 
-    # Convert input to MP3
-    print_and_flush("[STEP] Converting input to MP3 …")
-    try:
-        input_path = convert_to_mp3(input_path)
-    except Exception as e:
-        print_and_flush(f"[FATAL] Failed to convert input file to MP3: {e}")
-        raise
-
-    # Silence removal
-    print_and_flush("[STEP] Removing silence …")
-    try:
-        cleaned = remove_silence(input_path)
-    except Exception as e:
-        print_and_flush(f"[FATAL] Failed during silence removal: {e}")
-        raise
+    # --- unchanged work: convert, silence-remove ---------------------------
+    input_path = convert_to_mp3(input_path)
+    cleaned = remove_silence(input_path)
 
     if diarize:
         if not HUGGINGFACE_TOKEN:
-            print_and_flush("[ERROR] HUGGINGFACE_TOKEN not set. Aborting.")
             raise RuntimeError("Set HUGGINGFACE_TOKEN to accept model licenses.")
-        return diarize_and_transcribe(cleaned, output_txt)
+        return diarize_and_transcribe(cleaned, output_txt, client)
     else:
-        print_and_flush("[STEP] Chunking audio …")
-        try:
-            paths = chunk_audio(cleaned)
-        except Exception as e:
-            print_and_flush(f"[FATAL] Error during chunking: {e}")
-            raise
-
-        print_and_flush("[STEP] Sending chunks to Whisper API …")
-        try:
-            texts = transcribe_paths(client, paths)
-        except Exception as e:
-            print_and_flush(f"[FATAL] Error in Whisper transcription: {e}")
-            raise
-
-        print_and_flush(f"[STEP] Writing transcription to file: {output_txt} …")
-        try:
-            final_text = "\n".join(texts)
-            with open(output_txt, "w", encoding="utf-8") as fh:
-                fh.write(final_text)
-            print_and_flush(f"[SUCCESS] Finished! Transcription written to: {os.path.abspath(output_txt)}")
-            return os.path.abspath(output_txt)
-        except Exception as e:
-            print_and_flush(f"[FATAL] Could not write output file: {e}")
-            raise
+        paths = chunk_audio(cleaned)
+        texts = transcribe_paths(client, paths)
+        with open(output_txt, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(texts))
+        print_and_flush(f"[SUCCESS] Finished! Transcription written to: {os.path.abspath(output_txt)}")
+        return os.path.abspath(output_txt)
 
 
 # --- Entry Point ---
