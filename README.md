@@ -123,3 +123,18 @@ python script.py interview.flac out.txt \
 
 MIT © Leandro Piccione
 
+
+## Web Interface
+
+A simple Flask web server is provided to run the transcription through a browser.
+
+### Usage
+
+```bash
+pip install -r requirements.txt
+python webapp.py
+```
+
+Open `http://localhost:5000` and upload an audio file. Select desired options,
+start the transcription and follow the progress. Once finished, the transcript
+can be viewed in the browser or downloaded as a text file.

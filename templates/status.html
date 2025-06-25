@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2 class="mb-3 text-center">Processing…</h2>
+<pre id="log" class="bg-light p-3" style="height:300px;overflow:auto"></pre>
+<div id="done" style="display:none">
+  <h3 class="mt-4">Transcript</h3>
+  <pre id="result" class="bg-light p-3" style="white-space:pre-wrap"></pre>
+  <a id="download" class="btn btn-success mt-2" href="#" download>Download</a>
+</div>
+<script>
+const jobId = "{{ job_id }}";
+async function poll() {
+  const r = await fetch(`/logs/${jobId}`);
+  if (!r.ok) return;
+  const data = await r.json();
+  document.getElementById('log').textContent = data.log;
+  if (data.status === 'done') {
+    document.getElementById('result').textContent = data.result;
+    document.getElementById('download').href = `/download/${jobId}`;
+    document.getElementById('done').style.display = 'block';
+  } else if (data.status === 'error') {
+    document.getElementById('done').innerHTML = '<p class="text-danger">An error occurred.</p>';
+    document.getElementById('done').style.display = 'block';
+  } else {
+    setTimeout(poll, 1000);
+  }
+}
+poll();
+</script>
+{% endblock %}
