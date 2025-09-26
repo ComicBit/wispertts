@@ -4,9 +4,10 @@ Whisper transcription CLI
 
 Features
 --------
-• API mode (default)   – uses OpenAI Whisper
+• MLX mode (default on Mac) – uses Lightning Whisper MLX for Apple Silicon optimization
+• API mode             – uses OpenAI Whisper
 • Local mode           – `--mode local --local-model medium` loads openai-whisper
-• Automatic device     – CUDA → MPS → CPU, with Sparse-MPS → CPU fallback
+• Automatic device     – MLX → CUDA → MPS → CPU, with Sparse-MPS → CPU fallback
 • Optional diarization – `--diarize` (needs HuggingFace token & licence accept)
 • --timestamps / --aggregate flags
 • Robust FFmpeg progress, chunking, retries
@@ -16,6 +17,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -28,7 +30,12 @@ from typing import Optional
 
 import httpx
 import torch
-from pydub import AudioSegment
+try:
+    from pydub import AudioSegment
+except ImportError as e:
+    print(f"Warning: pydub import failed: {e}")
+    print("Try installing: pip install pydub")
+    AudioSegment = None
 from tqdm import tqdm
 import inspect
 import soundfile as sf
@@ -50,12 +57,29 @@ def log(msg: str):
     print(msg, flush=True)
 
 
+def is_apple_silicon() -> bool:
+    """Check if running on Apple Silicon (M1/M2/M3)"""
+    return platform.system() == "Darwin" and platform.machine() == "arm64"
+
+
 def prefer_device() -> torch.device:
     if torch.cuda.is_available():
         return torch.device("cuda")
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def get_default_mode() -> str:
+    """Get the default mode based on platform"""
+    if is_apple_silicon():
+        try:
+            # Test if MLX is available
+            import mlx.core as mx
+            return "mlx"
+        except ImportError:
+            pass
+    return "api"
 
 
 class Spinner:
@@ -184,7 +208,7 @@ def fmt_ts(sec):
     return f"{h:02d}:{m:02d}:{s:05.2f}"
 
 
-def _estimate_chunks(audio: AudioSegment) -> int:
+def _estimate_chunks(audio) -> int:
     """Estimate number of chunks produced by :func:`chunk`."""
 
     lim = SECONDS_LIMIT * 1000
@@ -200,7 +224,7 @@ def _estimate_chunks(audio: AudioSegment) -> int:
     return count
 
 
-def chunk(audio: AudioSegment):
+def chunk(audio):
     lim = SECONDS_LIMIT * 1000
     total = len(audio)
     start = 0
@@ -220,12 +244,143 @@ def chunk(audio: AudioSegment):
     return chunks
 
 
+# ------------------------------ MLX WHISPER ---------------------------------
+LightningWhisperMLX = None
+_MLX_BACKEND = None
+
+try:
+    # Import Lightning Whisper MLX from the local folder if present.
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lightning-whisper-mlx"))
+    from lightning_whisper_mlx import LightningWhisperMLX as _LightningWhisperMLX
+
+    LightningWhisperMLX = _LightningWhisperMLX
+    _MLX_BACKEND = "lightning"
+except ImportError:
+    try:
+        # Fallback to Apple's official mlx-whisper package when Lightning isn't vendored.
+        from mlx_whisper import transcribe as _mlx_transcribe
+        import mlx.core as mx
+
+        MLX_MODEL_ROOT = os.path.join(os.path.dirname(__file__), "mlx_models")
+        MLX_MODEL_REPOS = {
+            "tiny": "mlx-community/whisper-tiny",
+            "base": "mlx-community/whisper-base",
+            "small": "mlx-community/whisper-small",
+            "medium": "mlx-community/whisper-medium",
+            "large": "mlx-community/whisper-large",
+            "large-v2": "mlx-community/whisper-large-v2",
+            "large-v3": "mlx-community/whisper-large-v3",
+        }
+
+        def _resolve_mlx_repo(tag: str, quant: Optional[str]) -> str:
+            base = MLX_MODEL_MAP.get(tag, tag)
+            quant_suffix = (quant or "").lower().strip() or None
+            search_paths = []
+            if quant_suffix:
+                search_paths.append(os.path.join(MLX_MODEL_ROOT, f"{base}-{quant_suffix}"))
+            search_paths.append(os.path.join(MLX_MODEL_ROOT, base))
+
+            for path in search_paths:
+                if os.path.isdir(path):
+                    return path
+
+            if quant_suffix:
+                log(
+                    f"[WARN] MLX quant='{quant}' weights not found locally – using full precision."
+                )
+
+            return MLX_MODEL_REPOS.get(base, f"mlx-community/whisper-{base}")
+
+        class LightningWhisperMLX:  # type: ignore[override]
+            """Compatibility wrapper around mlx_whisper.transcribe."""
+
+            def __init__(self, model: str = "base", batch_size: int = 12, quant: Optional[str] = None):
+                self.model = model
+                self.batch_size = batch_size
+                self.quant = quant
+                self.repo = _resolve_mlx_repo(model, quant)
+                # Default to fp16 unless quantization requested (quant configs carry dtype).
+                self.dtype = mx.float16 if quant is None else mx.float32
+
+            def transcribe(self, audio_path: str, language: Optional[str] = None):
+                decode_opts = {}
+                if language:
+                    decode_opts["language"] = language
+                return _mlx_transcribe(
+                    audio_path,
+                    path_or_hf_repo=self.repo,
+                    verbose=False,
+                    fp16=self.dtype == mx.float16,
+                    **decode_opts,
+                )
+
+        _MLX_BACKEND = "mlx_whisper"
+    except ImportError:
+        LightningWhisperMLX = None
+
+MLX_BACKEND = _MLX_BACKEND
+
+_MLX_MODEL_CACHE = {}
+
+# Model mapping from standard names to MLX equivalents
+MLX_MODEL_MAP = {
+    "tiny": "tiny",
+    "base": "base",
+    "small": "small",
+    "medium": "medium",
+    "large": "large",
+    "large-v2": "large-v2",
+    "large-v3": "large-v3",
+}
+
+def load_mlx(tag: str, batch_size: int = 12, quant: Optional[str] = None):
+    """Load Lightning Whisper MLX model with caching"""
+    cache_key = f"{tag}_{batch_size}_{quant}"
+    if cache_key in _MLX_MODEL_CACHE:
+        return _MLX_MODEL_CACHE[cache_key]
+        
+    if LightningWhisperMLX is None:
+        raise RuntimeError(
+            "MLX mode requested but Lightning Whisper MLX is not available. "
+            "Install MLX dependencies or use --mode local/api instead."
+        )
+    
+    # Map standard model names to MLX names
+    mlx_model = MLX_MODEL_MAP.get(tag, tag)
+    
+    try:
+        log(f"[STEP] Loading Lightning Whisper MLX '{mlx_model}' (batch_size={batch_size}, quant={quant}) …")
+        mdl = LightningWhisperMLX(model=mlx_model, batch_size=batch_size, quant=quant)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load MLX model '{mlx_model}': {e}")
+    
+    _MLX_MODEL_CACHE[cache_key] = mdl
+    return mdl
+
+
+def w_tx_mlx(m, p, lang):
+    """Transcribe using Lightning Whisper MLX"""
+    try:
+        result = m.transcribe(p, language=lang)
+        return result.get('text', '').strip()
+    except Exception as e:
+        raise RuntimeError(f"MLX transcription failed: {e}")
+
+
 # ------------------------------ LOCAL WHISPER -------------------------------
 try:
     import whisper
 except ImportError:
     whisper = None
 _MODEL_CACHE = {}
+
+
+class _SparseMPSFallback(Exception):
+    """Signal that sparse MPS kernels are unavailable and MLX should be used."""
+
+    def __init__(self, tag: str):
+        self.tag = tag
+        super().__init__(tag)
 
 
 def load_local(tag: str, dev: torch.device):
@@ -239,7 +394,11 @@ def load_local(tag: str, dev: torch.device):
         log(f"[STEP] Loading Whisper '{tag}' on {dev} …")
         mdl = whisper.load_model(tag, device=str(dev), download_root=WHISPER_CACHE)
     except (RuntimeError, NotImplementedError) as e:
-        if "SparseMPS" in str(e) or "_sparse_coo_tensor" in str(e):
+        err = str(e)
+        if "SparseMPS" in err or "_sparse_coo_tensor" in err:
+            if LightningWhisperMLX is not None and is_apple_silicon():
+                log("[WARN] Sparse op missing on MPS – switching to MLX backend")
+                raise _SparseMPSFallback(tag) from e
             log("[WARN] Sparse op missing on MPS – falling back to CPU")
             mdl = whisper.load_model(tag, device="cpu", download_root=WHISPER_CACHE)
         else:
@@ -284,7 +443,12 @@ def transcribe_chunks(chs, *, mode, cli=None, mdl=None, lang):
     def work(idx_pair):
         i, (p, st, ed) = idx_pair
         try:
-            txt = w_tx_api(cli, p, lang) if mode == "api" else w_tx_local(mdl, p, lang)
+            if mode == "api":
+                txt = w_tx_api(cli, p, lang)
+            elif mode == "mlx":
+                txt = w_tx_mlx(mdl, p, lang)
+            else:  # local
+                txt = w_tx_local(mdl, p, lang)
         finally:
             os.unlink(p)
         return i, None, txt, st, ed
@@ -375,11 +539,12 @@ def diarize_tx(audio, *, mode, cli=None, mdl=None, lang):
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
         pt.export(tmp, format="mp3", bitrate=f"{BITRATE}k")
         try:
-            txt = (
-                w_tx_api(cli, tmp, lang)
-                if mode == "api"
-                else w_tx_local(mdl, tmp, lang)
-            )
+            if mode == "api":
+                txt = w_tx_api(cli, tmp, lang)
+            elif mode == "mlx":
+                txt = w_tx_mlx(mdl, tmp, lang)
+            else:  # local
+                txt = w_tx_local(mdl, tmp, lang)
         finally:
             os.unlink(tmp)
         return i, sp, txt, st, ed
@@ -417,7 +582,7 @@ def to_lines(rows, show):
 
 
 # ------------------------------ ORCHESTRATE ---------------------------------
-def run(infile, outfile, *, mode, local_tag, diarize, lang, show_ts, agg):
+def run(infile, outfile, *, mode, local_tag, mlx_batch_size, mlx_quant, diarize, lang, show_ts, agg):
     cli = mdl = None
     if mode == "api":
         if openai is None:
@@ -429,8 +594,19 @@ def run(infile, outfile, *, mode, local_tag, diarize, lang, show_ts, agg):
             timeout=httpx.Timeout(120, read=PER_REQ_TIMEOUT),
             max_retries=3,
         )
-    else:
-        mdl = load_local(local_tag, prefer_device())
+    elif mode == "mlx":
+        mdl = load_mlx(local_tag, batch_size=mlx_batch_size, quant=mlx_quant)
+    else:  # local
+        try:
+            mdl = load_local(local_tag, prefer_device())
+        except _SparseMPSFallback as err:
+            if LightningWhisperMLX is None:
+                raise RuntimeError(
+                    "Sparse MPS kernels missing and no MLX backend available; install 'mlx'"
+                ) from err
+            mode = "mlx"
+            log("[INFO] Using MLX backend for local transcription")
+            mdl = load_mlx(local_tag, batch_size=mlx_batch_size, quant=mlx_quant)
 
     mp3 = convert(infile)
     cleaned = remove_silence(mp3)
@@ -451,22 +627,43 @@ def run(infile, outfile, *, mode, local_tag, diarize, lang, show_ts, agg):
 # ------------------------------ CLI -----------------------------------------
 def main():
     ap = argparse.ArgumentParser(
-        description="Transcribe audio via Whisper (API/local)."
+        description="Transcribe audio via Whisper (MLX/API/local)."
     )
     ap.add_argument("input_file")
     ap.add_argument("output_file")
-    ap.add_argument("--mode", choices=["api", "local"], default="api")
-    ap.add_argument("--local-model", default="base")
+    ap.add_argument("--mode", choices=["mlx", "api", "local"], default=None,
+                    help="Transcription mode. Defaults to 'mlx' on Apple Silicon, 'api' otherwise.")
+    ap.add_argument("--local-model", default="base", 
+                    help="Model size for local/mlx modes")
+    ap.add_argument("--mlx-batch-size", type=int, default=12,
+                    help="Batch size for MLX mode (higher = faster but more memory)")
+    ap.add_argument("--mlx-quant", choices=[None, "4bit", "8bit"], default=None,
+                    help="Quantization for MLX mode (reduces memory usage)")
     ap.add_argument("--diarize", action="store_true")
     ap.add_argument("--language", default=None, metavar="ISO")
     ap.add_argument("--timestamps", action="store_true")
     ap.add_argument("--aggregate", action="store_true")
     args = ap.parse_args()
+    
+    # Set default mode based on platform if not specified
+    mode = args.mode or get_default_mode()
+    
+    # Validate MLX availability if requested
+    if mode == "mlx" and not is_apple_silicon():
+        log("[WARN] MLX mode requested but not running on Apple Silicon. Falling back to API mode.")
+        mode = "api"
+    
+    if mode == "mlx" and LightningWhisperMLX is None:
+        log("[WARN] MLX mode requested but Lightning Whisper MLX not available. Falling back to local mode.")
+        mode = "local"
+    
     run(
         args.input_file,
         args.output_file,
-        mode=args.mode,
+        mode=mode,
         local_tag=args.local_model,
+        mlx_batch_size=args.mlx_batch_size,
+        mlx_quant=args.mlx_quant,
         diarize=args.diarize,
         lang=args.language,
         show_ts=args.timestamps,
