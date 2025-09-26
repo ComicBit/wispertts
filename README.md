@@ -116,6 +116,7 @@ python script.py interview.flac out.txt \
 | `RateLimitError` loops         | Lower workers or request higher OpenAI quota            |
 | `ffmpeg not found`             | Ensure FFmpeg in PATH (`ffmpeg -version`)               |
 | pyannote download/auth errors  | Export valid `HUGGINGFACE_TOKEN`; accept model licence  |
+| MPS falls back to CPU          | macOS builds now auto‑use MLX (`mlx-whisper`); reinstall weights under `./mlx_models` if Apple MLX packages were removed |
 
 ---
 
@@ -130,11 +131,110 @@ A simple Flask web server is provided to run the transcription through a browser
 
 ### Usage
 
+# wispertts — Audio → Text (CLI + Web)
+
+This repository provides both:
+
+- A CLI transcription tool (`script.py`) that uses OpenAI Whisper (API, local, or MLX) and optional speaker diarization via `pyannote.audio`.
+- A small Flask web UI (`webapp.py`) to upload audio and run transcriptions from a browser.
+
+This README shows how to install, run the CLI, and run the web UI on macOS (zsh). It includes a small helper script to automate setup and launching.
+
+## Quick setup (recommended)
+
+1. Create and activate a virtual environment:
+
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+2. Install Python dependencies:
+
+```bash
+pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+3. Install FFmpeg (required for audio processing):
+
+macOS (Homebrew):
+```bash
+brew install ffmpeg
+```
+
+Linux (Debian/Ubuntu):
+```bash
+sudo apt update && sudo apt install -y ffmpeg
+```
+
+4. Export API keys (if using OpenAI or HuggingFace models):
+
+```bash
+export OPENAI_API_KEY="sk-..."
+# Optional: for diarization (pyannote)
+export HUGGINGFACE_TOKEN="hf_..."
+```
+
+## Run the CLI
+
+Basic usage:
+
+```bash
+python script.py input_audio.wav output.txt
+```
+
+Common options:
+- --mode: `api` (default), `local`, or `mlx` (Apple MLX)
+- --local-model: local whisper tag (e.g. `tiny`, `base`, `large-v3`)
+- --diarize: enable speaker diarization (requires `HUGGINGFACE_TOKEN`)
+- --language: force language code (e.g. `it`, `de`)
+- --timestamps / --aggregate: formatting options
+
+See `script.py --help` for the full list of flags.
+
+## Run the Web UI
+
+Start the Flask server:
+
+```bash
 python webapp.py
 ```
 
-Open `http://localhost:5000` and upload an audio file. Select desired options,
-start the transcription and follow the progress. Once finished, the transcript
-can be viewed in the browser or downloaded as a text file.
+Open http://localhost:5001 in your browser. Upload an audio file, choose options and start the transcription. The web UI runs transcriptions in background threads and exposes a status page and download link when complete.
+
+## Helper installer / launcher
+
+A convenience script is included at `scripts/run.sh`. It will:
+
+- Create a virtual environment (if missing)
+- Install Python requirements
+- (Optionally) install FFmpeg on macOS via Homebrew
+- Launch either the CLI or the web UI
+
+Usage examples:
+
+Install dependencies and start the web UI:
+```bash
+bash scripts/run.sh --install --web
+```
+
+Install dependencies and run a CLI transcription:
+```bash
+bash scripts/run.sh --install --cli -- input.wav output.txt
+```
+
+Run the web UI only (assumes deps already installed):
+```bash
+bash scripts/run.sh --web
+```
+
+## Troubleshooting
+
+- If `pydub` reports "No module named 'pyaudioop'", install `pydub` into the same environment (this repo includes a small shim to help compatibility).
+- Ensure `python` and `pip` point at the same environment: `which python` and `python -m pip show pydub`.
+- If CUDA/MPS issues occur, check your PyTorch installation instructions on https://pytorch.org for the correct wheel for your platform.
+
+## Contributing & License
+
+MIT — see `LICENSE.md`.

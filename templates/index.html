@@ -11,15 +11,33 @@
   </div>
   <div class="col-md-6">
     <label class="form-label">Mode</label>
-    <select class="form-select" name="mode">
+    <select class="form-select" name="mode" id="mode">
       <option value="api" selected>OpenAI API</option>
-      <option value="local">Local</option>
+      {% if mlx_available %}
+      <option value="mlx">MLX (Apple Silicon)</option>
+      {% endif %}
+      <option value="local">Local (openai-whisper)</option>
     </select>
   </div>
-  <div class="col-md-6">
-    <label class="form-label">Local model tag</label>
-    <input class="form-control" type="text" name="local_model" value="base">
+
+  <!-- Model selection for Local/MLX -->
+  <div class="col-md-6" id="model-row">
+    <label class="form-label">Model</label>
+    <select class="form-select" name="local_model" id="local_model">
+      <option value="tiny">tiny</option>
+      <option value="tiny.en">tiny.en</option>
+      <option value="base" selected>base</option>
+      <option value="base.en">base.en</option>
+      <option value="small">small</option>
+      <option value="small.en">small.en</option>
+      <option value="medium">medium</option>
+      <option value="medium.en">medium.en</option>
+      <option value="large-v3">large-v3</option>
+    </select>
   </div>
+
+  <!-- MLX-specific advanced options removed for simplicity -->
+
   <div class="col-12">
     <div class="form-check form-check-inline">
       <input class="form-check-input" type="checkbox" name="diarize" id="diarize">
@@ -38,4 +56,16 @@
     <button type="submit" class="btn btn-primary">Start</button>
   </div>
 </form>
+
+<script>
+  const modeEl = document.getElementById('mode');
+  const modelRow = document.getElementById('model-row');
+  function syncMode() {
+    const m = modeEl.value;
+    const showModel = (m === 'local' || m === 'mlx');
+    modelRow.style.display = showModel ? '' : 'none';
+  }
+  modeEl.addEventListener('change', syncMode);
+  syncMode();
+  </script>
 {% endblock %}
