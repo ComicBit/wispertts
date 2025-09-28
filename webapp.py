@@ -7,7 +7,7 @@ import threading
 import traceback
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 from flask import (
     Flask,
@@ -38,6 +38,8 @@ class Job:
     log: str = ""
     result: Optional[str] = None
     error: Optional[str] = None
+    progress: float = 0.0
+    stage: str = "Queued for processing"
 
 
 jobs: Dict[str, Job] = {}
@@ -55,17 +57,100 @@ _ensure_dir(UPLOAD_DIR)
 _ensure_dir(OUT_DIR)
 
 
+PROGRESS_HINTS: List[Tuple[str, float, str]] = [
+    ("[STEP] Loading", 0.15, "Preparing transcription pipeline"),
+    ("[STEP] Converting", 0.25, "Converting audio"),
+    ("[STEP] Removing silence", 0.35, "Cleaning silence"),
+    ("[STEP] Chunking", 0.45, "Splitting audio into chunks"),
+    ("[STEP] Diarization", 0.6, "Detecting speakers"),
+    ("[STEP] Transcribing segments", 0.75, "Transcribing segments"),
+    ("[STEP] Transcribing", 0.7, "Transcribing audio"),
+    ("[SUCCESS]", 1.0, "Transcript ready"),
+]
+
+
+MODEL_LIBRARY: List[Tuple[str, str]] = [
+    ("large-v3", "Large v3 • Best quality"),
+    ("medium", "Medium • Balanced"),
+    ("medium.en", "Medium.en • Balanced (English)"),
+    ("small", "Small • Fast"),
+    ("small.en", "Small.en • Fast (English)"),
+    ("base", "Base • Default"),
+    ("base.en", "Base.en • Default (English)"),
+    ("tiny", "Tiny • Fastest"),
+    ("tiny.en", "Tiny.en • Fastest (English)"),
+]
+
+
+def _resolve_local_backend() -> Tuple[str, str]:
+    """Return (mode, friendly_label) for local execution."""
+
+    torch_mod = getattr(tx, "torch", None)
+    if torch_mod is not None and getattr(torch_mod, "cuda", None):
+        try:
+            if torch_mod.cuda.is_available():
+                return "local", "NVIDIA GPU"
+        except Exception:
+            pass
+
+    mlx_available = tx.is_apple_silicon() and bool(getattr(tx, "LightningWhisperMLX", None))
+    if mlx_available:
+        return "mlx", "Apple MLX"
+
+    mps_backend = None
+    try:
+        mps_backend = getattr(torch_mod.backends, "mps", None)
+    except Exception:
+        mps_backend = None
+    if mps_backend is not None:
+        try:
+            if mps_backend.is_available():
+                return "local", "Apple MPS"
+        except Exception:
+            pass
+
+    return "local", "CPU"
+
+
+def _ordered_model_choices() -> List[Dict[str, object]]:
+    download_root = getattr(tx, "WHISPER_CACHE", os.path.join(os.path.dirname(__file__), "models", "whisper"))
+    choices: List[Dict[str, object]] = []
+    for idx, (slug, label) in enumerate(MODEL_LIBRARY):
+        model_path = os.path.join(download_root, f"{slug}.pt")
+        downloaded = os.path.exists(model_path)
+        choices.append(
+            {
+                "value": slug,
+                "label": label,
+                "downloaded": downloaded,
+                "order": idx,
+            }
+        )
+
+    choices.sort(key=lambda item: (not item["downloaded"], item["order"]))
+    return choices
+
+
 def _run_job(job: Job, *, mode: str, local_model: str, language: Optional[str],
              diarize: bool, aggregate: bool, timestamps: bool,
              mlx_batch_size: int = 12, mlx_quant: Optional[str] = None):
     # Capture tx.log into the job while still printing to stdout
     orig_log = tx.log
 
+    def set_progress(pct: float, label: Optional[str] = None):
+        job.progress = max(job.progress, min(max(pct, 0.0), 1.0))
+        if label:
+            job.stage = label
+
     def web_log(msg: str):
         try:
             job.log += (msg + "\n")
         except Exception:
             pass
+        for marker, pct, label in PROGRESS_HINTS:
+            if marker in msg:
+                set_progress(pct, label)
+                break
         # Also forward to console for debugging
         try:
             orig_log(msg)
@@ -79,6 +164,22 @@ def _run_job(job: Job, *, mode: str, local_model: str, language: Optional[str],
         run_lock.acquire()
         # Keep web default simple and robust: default to API unless user chose otherwise
         m = mode or "api"
+        set_progress(0.1, "Starting transcription")
+
+        if m == "local":
+            resolved_mode, backend_label = _resolve_local_backend()
+            m = resolved_mode
+            web_log(f"[INFO] Local engine resolved → {backend_label}")
+            if backend_label == "CPU":
+                set_progress(0.12, "Running on CPU")
+            elif backend_label == "NVIDIA GPU":
+                set_progress(0.12, "Running on NVIDIA GPU")
+            elif backend_label == "Apple MLX":
+                set_progress(0.12, "Running on MLX")
+            elif backend_label == "Apple MPS":
+                set_progress(0.12, "Running on Apple MPS")
+            else:
+                set_progress(0.12, f"Running on {backend_label}")
 
         # Mirror CLI fallbacks so web behaves like terminal
         if m == "mlx" and not tx.is_apple_silicon():
@@ -110,10 +211,12 @@ def _run_job(job: Job, *, mode: str, local_model: str, language: Optional[str],
         with open(job.outfile, "r", encoding="utf-8") as fh:
             job.result = fh.read()
         job.status = "done"
+        set_progress(1.0, "Transcript ready")
     except Exception as e:
         job.status = "error"
         job.error = f"{e}\n\n" + traceback.format_exc()
         job.log += f"\n[ERROR] {e}\n"
+        set_progress(1.0, "Processing failed")
     finally:
         # Restore logger
         tx.log = orig_log
@@ -127,7 +230,20 @@ def _run_job(job: Job, *, mode: str, local_model: str, language: Optional[str],
 def index():
     # Show MLX option on Apple Silicon, even if backend may fallback
     mlx_available = tx.is_apple_silicon() and bool(getattr(tx, "LightningWhisperMLX", None))
-    return render_template("index.html", mlx_available=mlx_available)
+    model_choices = _ordered_model_choices()
+    default_model = "base"
+    default_model_label = next(
+        (item["label"] for item in model_choices if item["value"] == default_model),
+        model_choices[0]["label"] if model_choices else default_model,
+    )
+
+    return render_template(
+        "index.html",
+        mlx_available=mlx_available,
+        model_choices=model_choices,
+        default_model=default_model,
+        default_model_label=default_model_label,
+    )
 
 
 @app.post("/start")
@@ -154,7 +270,7 @@ def start():
     out_path = os.path.join(OUT_DIR, f"{jid}.txt")
     f.save(in_path)
 
-    job = Job(id=jid, infile=in_path, outfile=out_path)
+    job = Job(id=jid, infile=in_path, outfile=out_path, progress=0.05, stage="Queued for processing")
     with jobs_lock:
         jobs[jid] = job
 
@@ -174,6 +290,23 @@ def start():
         daemon=True,
     )
     t.start()
+
+    # Serve JSON to clients using fetch/XHR, fall back to legacy redirect otherwise
+    wants_json = request.accept_mimetypes.best == "application/json" or (
+        request.accept_mimetypes["application/json"]
+        and request.accept_mimetypes["application/json"] >= request.accept_mimetypes["text/html"]
+    ) or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    if wants_json:
+        return jsonify(
+            {
+                "job_id": jid,
+                "logs_url": url_for("logs", job_id=jid),
+                "download_url": url_for("download", job_id=jid),
+                "progress": job.progress,
+                "stage": job.stage,
+            }
+        )
 
     return redirect(url_for("status", job_id=jid))
 
@@ -196,6 +329,8 @@ def logs(job_id: str):
     payload = {
         "status": job.status,
         "log": job.log,
+        "progress": job.progress,
+        "stage": job.stage,
     }
     if job.status == "done":
         payload["result"] = job.result or ""
