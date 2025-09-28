@@ -1,30 +1,339 @@
 {% extends 'base.html' %}
-{% block content %}
-<h2 class="mb-3 text-center">Processing…</h2>
-<pre id="log" class="bg-light p-3" style="height:300px;overflow:auto"></pre>
-<div id="done" style="display:none">
-  <h3 class="mt-4">Transcript</h3>
-  <pre id="result" class="bg-light p-3" style="white-space:pre-wrap"></pre>
-  <a id="download" class="btn btn-success mt-2" href="#" download>Download</a>
-</div>
-<script>
-const jobId = "{{ job_id }}";
-async function poll() {
-  const r = await fetch(`/logs/${jobId}`);
-  if (!r.ok) return;
-  const data = await r.json();
-  document.getElementById('log').textContent = data.log;
-  if (data.status === 'done') {
-    document.getElementById('result').textContent = data.result;
-    document.getElementById('download').href = `/download/${jobId}`;
-    document.getElementById('done').style.display = 'block';
-  } else if (data.status === 'error') {
-    document.getElementById('done').innerHTML = '<p class="text-danger">An error occurred.</p>';
-    document.getElementById('done').style.display = 'block';
-  } else {
-    setTimeout(poll, 1000);
+
+{% block styles %}
+<style>
+  .status-layout {
+    display: grid;
+    gap: 24px;
   }
-}
-poll();
+
+  .stepper {
+    display: flex;
+    gap: 12px;
+  }
+
+  .step {
+    flex: 1;
+    position: relative;
+    padding: 14px 16px;
+    border-radius: 14px;
+    background: white;
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    text-align: center;
+    font-weight: 600;
+    color: var(--muted);
+    transition: all 0.2s ease;
+  }
+
+  .step.active {
+    background: rgba(91, 75, 255, 0.12);
+    border-color: rgba(91, 75, 255, 0.24);
+    color: var(--brand);
+  }
+
+  .step.completed {
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.24);
+    color: #15803d;
+  }
+
+  .progress-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 18px;
+  }
+
+  .progress-track {
+    position: relative;
+    width: 100%;
+    height: 12px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.25);
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    position: absolute;
+    inset: 0;
+    width: 12%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--brand), #a855f7);
+    transform-origin: left center;
+    transform: scaleX(0.02);
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .progress-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  .status-desc {
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-weight: 600;
+    background: rgba(148, 163, 184, 0.16);
+    color: #334155;
+    margin-bottom: 18px;
+  }
+
+  .status-badge.processing {
+    background: rgba(91, 75, 255, 0.15);
+    color: var(--brand);
+  }
+
+  .status-badge.success {
+    background: rgba(34, 197, 94, 0.18);
+    color: #15803d;
+  }
+
+  .status-badge.error {
+    background: rgba(239, 68, 68, 0.18);
+    color: #b91c1c;
+  }
+
+  .result-block {
+    display: none;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .result-block.active {
+    display: flex;
+  }
+
+  .result-block pre {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    padding: 18px;
+    max-height: 360px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+
+  .ghost-btn {
+    border-radius: 999px;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    padding: 10px 18px;
+    background: white;
+    font-weight: 600;
+    color: var(--muted);
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ghost-btn:hover {
+    border-color: rgba(15, 23, 42, 0.2);
+    color: var(--brand);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="surface-card status-layout">
+  <div>
+    <h2 class="mb-3">Your job is running</h2>
+    <p class="muted mb-0">Keep this page open to watch progress. You can safely head back once it finishes.</p>
+  </div>
+
+  <div>
+    <div class="stepper" id="stepper">
+      <div class="step" data-step="upload">Upload</div>
+      <div class="step" data-step="processing">Processing</div>
+      <div class="step" data-step="complete">Complete</div>
+    </div>
+
+    <div class="status-badge" id="status-badge">
+      <span class="status-text">Getting things ready…</span>
+    </div>
+
+    <div class="progress-shell">
+      <div class="progress-track">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      <div class="progress-meta">
+        <span id="progress-stage">Connecting…</span>
+        <span id="progress-percent">0%</span>
+      </div>
+      <p class="status-desc" id="status-intro">We are preparing Whisper for your audio.</p>
+    </div>
+
+    <div class="result-block" id="result-block">
+      <div class="actions">
+        <a id="download" class="ghost-btn" href="#" download>Download transcript</a>
+        <button type="button" class="ghost-btn" id="copy">Copy to clipboard</button>
+      </div>
+      <pre id="result"></pre>
+    </div>
+  </div>
+
+  <div>
+    <a href="/" class="ghost-btn">← Start another transcription</a>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const jobId = "{{ job_id }}";
+  const progressBar = document.getElementById('progress-bar');
+  const progressStage = document.getElementById('progress-stage');
+  const progressPercent = document.getElementById('progress-percent');
+  const progressIntro = document.getElementById('status-intro');
+  const resultBlock = document.getElementById('result-block');
+  const resultEl = document.getElementById('result');
+  const downloadEl = document.getElementById('download');
+  const copyEl = document.getElementById('copy');
+  const statusBadge = document.getElementById('status-badge');
+  const statusText = statusBadge.querySelector('.status-text');
+  const steps = {
+    upload: document.querySelector('.step[data-step="upload"]'),
+    processing: document.querySelector('.step[data-step="processing"]'),
+    complete: document.querySelector('.step[data-step="complete"]'),
+  };
+
+  function setStep(step) {
+    Object.entries(steps).forEach(([key, el]) => {
+      el.classList.remove('active', 'completed');
+      if (key === step) {
+        el.classList.add('active');
+      } else if (
+        (step === 'processing' && key === 'upload') ||
+        (step === 'complete' && (key === 'upload' || key === 'processing'))
+      ) {
+        el.classList.add('completed');
+      }
+    });
+  }
+
+  function setBadge(message, variant = 'neutral') {
+    statusBadge.classList.remove('processing', 'success', 'error');
+    if (variant === 'processing') {
+      statusBadge.classList.add('processing');
+    } else if (variant === 'success') {
+      statusBadge.classList.add('success');
+    } else if (variant === 'error') {
+      statusBadge.classList.add('error');
+    }
+    statusText.textContent = message;
+  }
+
+  function setProgress(value, stageText, description) {
+    const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
+    progressBar.style.transform = `scaleX(${Math.max(0.02, pct / 100)})`;
+    progressStage.textContent = stageText || 'Processing…';
+    progressPercent.textContent = `${pct}%`;
+    progressIntro.textContent = description || '';
+  }
+
+  async function poll() {
+    try {
+      const response = await fetch(`/logs/${jobId}`, {
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      const progressValue = typeof data.progress === 'number' ? data.progress : 0;
+      const stageText = data.stage || 'Processing…';
+      let description = 'Working through your audio.';
+      if (stageText.includes('Queued')) {
+        description = 'Your file is queued and will start shortly.';
+      } else if (stageText.includes('Starting')) {
+        description = 'Setting up Whisper and preparing your audio.';
+      } else if (stageText.includes('Running on')) {
+        description = stageText.includes('NVIDIA')
+          ? 'Using your NVIDIA GPU for peak speed.'
+          : stageText.includes('MLX')
+            ? 'Taking advantage of the Apple MLX backend.'
+            : 'Processing locally on the CPU.';
+      } else if (stageText.includes('Converting')) {
+        description = 'Optimising audio format for transcription.';
+      } else if (stageText.includes('Cleaning')) {
+        description = 'Cleaning silence and preparing audio chunks.';
+      } else if (stageText.includes('Transcribing')) {
+        description = 'Running Whisper on your audio.';
+      } else if (stageText.includes('Detecting')) {
+        description = 'Locating speaker changes.';
+      } else if (stageText.includes('Transcript ready')) {
+        description = 'All done! Download the transcript below.';
+      } else if (stageText.includes('failed')) {
+        description = 'We hit a snag while processing.';
+      }
+
+      setProgress(progressValue, stageText, description);
+
+      if (data.status === 'done') {
+        setStep('complete');
+        setBadge('Transcript ready!', 'success');
+        resultBlock.classList.add('active');
+        resultEl.textContent = data.result || '';
+        downloadEl.href = `/download/${jobId}`;
+        return;
+      }
+
+      if (data.status === 'error') {
+        setBadge('Something went wrong during processing.', 'error');
+        resultBlock.classList.remove('active');
+        if (data.error) {
+          progressIntro.textContent = data.error;
+        }
+        return;
+      }
+
+      setStep('processing');
+      setBadge('Processing with Whisper…', 'processing');
+      setTimeout(poll, 1000);
+    } catch (err) {
+      console.error(err);
+      setBadge('Connection hiccup. Retrying…', 'error');
+      progressIntro.textContent = 'Trying to reconnect to the transcription job…';
+      setTimeout(poll, 2000);
+    }
+  }
+
+  copyEl.addEventListener('click', async () => {
+    if (!resultEl.textContent) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(resultEl.textContent);
+      copyEl.textContent = 'Copied!';
+      setTimeout(() => {
+        copyEl.textContent = 'Copy to clipboard';
+      }, 1600);
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  setStep('processing');
+  setBadge('Processing with Whisper…', 'processing');
+  setProgress(0.1, 'Starting transcription…', 'Preparing Whisper to process your audio.');
+  poll();
 </script>
 {% endblock %}

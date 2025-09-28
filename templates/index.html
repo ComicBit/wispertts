@@ -1,71 +1,862 @@
 {% extends 'base.html' %}
-{% block content %}
-<h2 class="mb-4 text-center">Audio to Text</h2>
-<form method="post" action="/start" enctype="multipart/form-data" class="row g-3">
-  <div class="col-12">
-    <input class="form-control" type="file" name="audio" required>
-  </div>
-  <div class="col-md-6">
-    <label class="form-label">Language code</label>
-    <input class="form-control" type="text" name="language" placeholder="auto">
-  </div>
-  <div class="col-md-6">
-    <label class="form-label">Mode</label>
-    <select class="form-select" name="mode" id="mode">
-      <option value="api" selected>OpenAI API</option>
-      {% if mlx_available %}
-      <option value="mlx">MLX (Apple Silicon)</option>
-      {% endif %}
-      <option value="local">Local (openai-whisper)</option>
-    </select>
-  </div>
-
-  <!-- Model selection for Local/MLX -->
-  <div class="col-md-6" id="model-row">
-    <label class="form-label">Model</label>
-    <select class="form-select" name="local_model" id="local_model">
-      <option value="tiny">tiny</option>
-      <option value="tiny.en">tiny.en</option>
-      <option value="base" selected>base</option>
-      <option value="base.en">base.en</option>
-      <option value="small">small</option>
-      <option value="small.en">small.en</option>
-      <option value="medium">medium</option>
-      <option value="medium.en">medium.en</option>
-      <option value="large-v3">large-v3</option>
-    </select>
-  </div>
-
-  <!-- MLX-specific advanced options removed for simplicity -->
-
-  <div class="col-12">
-    <div class="form-check form-check-inline">
-      <input class="form-check-input" type="checkbox" name="diarize" id="diarize">
-      <label class="form-check-label" for="diarize">Speaker detection</label>
-    </div>
-    <div class="form-check form-check-inline">
-      <input class="form-check-input" type="checkbox" name="aggregate" id="aggregate">
-      <label class="form-check-label" for="aggregate">Aggregate lines</label>
-    </div>
-    <div class="form-check form-check-inline">
-      <input class="form-check-input" type="checkbox" name="timestamps" id="timestamps">
-      <label class="form-check-label" for="timestamps">Include timestamps</label>
-    </div>
-  </div>
-  <div class="col-12 text-center">
-    <button type="submit" class="btn btn-primary">Start</button>
-  </div>
-</form>
-
-<script>
-  const modeEl = document.getElementById('mode');
-  const modelRow = document.getElementById('model-row');
-  function syncMode() {
-    const m = modeEl.value;
-    const showModel = (m === 'local' || m === 'mlx');
-    modelRow.style.display = showModel ? '' : 'none';
+{% block styles %}
+<style>
+  .layout-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.85fr);
+    gap: 24px;
   }
-  modeEl.addEventListener('change', syncMode);
-  syncMode();
-  </script>
+
+  .stack {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .dropzone {
+    border: 2px dashed rgba(91, 75, 255, 0.3);
+    border-radius: 18px;
+    background: var(--brand-soft);
+    padding: 36px 26px;
+    text-align: center;
+    transition: all 0.2s ease;
+    cursor: pointer;
+  }
+
+  .dropzone:hover,
+  .dropzone.dragging {
+    border-color: var(--brand);
+    background: rgba(91, 75, 255, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(91, 75, 255, 0.12);
+  }
+
+  .dropzone input {
+    display: none;
+  }
+
+  .dropzone .hint {
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+
+  .dropzone .file-name {
+    margin-top: 10px;
+    font-weight: 600;
+    color: var(--brand);
+    word-break: break-word;
+  }
+
+  .chip-group {
+    display: inline-flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .chip {
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: white;
+    padding: 9px 18px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .chip.active {
+    background: var(--brand);
+    border-color: transparent;
+    color: white;
+    box-shadow: 0 10px 18px rgba(91, 75, 255, 0.28);
+  }
+
+  .chip.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  details.settings {
+    background: white;
+    border-radius: 16px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    padding: 18px 20px;
+    transition: box-shadow 0.2s ease;
+  }
+
+  details.settings[open] {
+    box-shadow: 0 12px 22px rgba(15, 23, 42, 0.12);
+  }
+
+  details.settings summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  details.settings summary::-webkit-details-marker {
+    display: none;
+  }
+
+  details.settings .settings-grid {
+    margin-top: 18px;
+    display: grid;
+    gap: 18px;
+  }
+
+  .form-label {
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  .model-wrapper {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .model-wrapper.active {
+    display: flex;
+  }
+
+  .model-picker {
+    position: relative;
+  }
+
+  .model-toggle {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    border-radius: 14px;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    background: white;
+    font-weight: 600;
+    color: #1f2937;
+    transition: all 0.2s ease;
+    box-shadow: 0 8px 18px rgba(91, 75, 255, 0.06);
+  }
+
+  .model-toggle:focus-visible,
+  .model-toggle:hover {
+    border-color: rgba(91, 75, 255, 0.4);
+    box-shadow: 0 12px 24px rgba(91, 75, 255, 0.14);
+  }
+
+  .model-toggle .caret {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: rgba(91, 75, 255, 0.14);
+    display: grid;
+    place-items: center;
+    color: var(--brand);
+    font-size: 0.75rem;
+    transition: transform 0.2s ease;
+  }
+
+  .model-picker.open .model-toggle .caret {
+    transform: rotate(180deg);
+  }
+
+  .model-menu {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    right: 0;
+    background: rgba(255, 255, 255, 0.98);
+    border-radius: 16px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 22px 45px rgba(15, 23, 42, 0.18);
+    padding: 10px 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-4px) scale(0.96);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 20;
+  }
+
+  .model-picker.open .model-menu {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+  }
+
+  .model-option {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 18px;
+    background: transparent;
+    border: none;
+    text-align: left;
+    font-weight: 500;
+    color: #1f2937;
+    cursor: pointer;
+    transition: background 0.12s ease, transform 0.12s ease;
+  }
+
+  .model-option:hover,
+  .model-option:focus-visible {
+    background: rgba(91, 75, 255, 0.08);
+    transform: translateX(2px);
+  }
+
+  .model-option.downloaded .badge {
+    background: rgba(34, 197, 94, 0.18);
+    color: #15803d;
+  }
+
+  .badge {
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: rgba(148, 163, 184, 0.2);
+    color: #475569;
+    white-space: nowrap;
+  }
+
+  .feedback {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    color: #991b1b;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-weight: 500;
+    display: none;
+  }
+
+  .feedback.visible {
+    display: block;
+  }
+
+  .progress-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .progress-track {
+    position: relative;
+    width: 100%;
+    height: 12px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.25);
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    position: absolute;
+    inset: 0;
+    width: 12%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--brand), #a855f7);
+    transform-origin: left center;
+    transform: scaleX(0);
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .progress-bar[data-progress="0"] {
+    transform: scaleX(0.02);
+  }
+
+  .progress-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  .status-board {
+    display: grid;
+    gap: 14px;
+    margin-top: 8px;
+  }
+
+  .status-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-top: 4px;
+    background: rgba(148, 163, 184, 0.45);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .status-dot::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    background: rgba(91, 75, 255, 0.35);
+    border-radius: 50%;
+    transform: scale(0);
+    opacity: 0;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+  }
+
+  .status-dot[data-state="active"] {
+    background: var(--brand);
+  }
+
+  .status-dot[data-state="active"]::after {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  .status-dot[data-state="done"] {
+    background: rgba(34, 197, 94, 0.85);
+  }
+
+  .status-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .status-title {
+    font-weight: 600;
+    color: #0f172a;
+  }
+
+  .status-desc {
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+
+  .result-card {
+    display: none;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .result-card.active {
+    display: flex;
+  }
+
+  .result-card pre {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    padding: 18px;
+    max-height: 360px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-size: 0.95rem;
+  }
+
+  .result-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .ghost-btn {
+    border-radius: 999px;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    padding: 10px 18px;
+    background: white;
+    font-weight: 600;
+    color: var(--muted);
+    transition: all 0.15s ease;
+  }
+
+  .ghost-btn:hover {
+    border-color: rgba(15, 23, 42, 0.2);
+    color: var(--brand);
+  }
+
+  .info-card ul {
+    padding-left: 18px;
+    margin-bottom: 18px;
+    color: var(--muted);
+  }
+
+  .info-card li {
+    margin-bottom: 8px;
+  }
+
+  .info-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: rgba(15, 23, 42, 0.08);
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  @media (max-width: 1024px) {
+    .layout-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .dropzone {
+      padding: 28px;
+    }
+
+    .result-card pre {
+      max-height: 280px;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="stack">
+  <div class="surface-card">
+    <h2 class="mb-2">Transcribe audio without the guesswork</h2>
+    <p class="muted mb-0">Drop a file, choose how you want Whisper to run, and we handle the rest – transcripts, speaker detection, timestamps, and more.</p>
+  </div>
+
+  <div class="layout-grid">
+    <div class="stack">
+      <div class="surface-card">
+        <form id="upload-form" class="stack" method="post" action="/start" enctype="multipart/form-data">
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="audio" name="audio" accept="audio/*,video/*">
+            <div><strong>Drag &amp; drop audio</strong> or click to browse</div>
+            <div class="hint">Supports WAV, MP3, M4A, WebM, MP4 and more (max 512&nbsp;MB)</div>
+            <div class="file-name" id="file-name"></div>
+          </div>
+
+          <div>
+            <label for="language" class="form-label">Language (leave blank to auto-detect)</label>
+            <input class="form-control" type="text" id="language" name="language" placeholder="auto">
+          </div>
+
+          <details class="settings">
+            <summary>
+              Advanced transcription settings
+              <span class="info-badge">optional</span>
+            </summary>
+            <div class="settings-grid">
+              <div>
+                <label class="form-label">Engine</label>
+                <div class="chip-group" id="mode-chips">
+                  <button type="button" class="chip" data-mode="api">OpenAI API</button>
+                  <button type="button" class="chip" data-mode="local">Run locally</button>
+                </div>
+                <input type="hidden" name="mode" id="mode" value="api">
+              </div>
+
+              <div class="model-wrapper" id="model-wrapper">
+                <label class="form-label" for="local-model-value">Model size</label>
+                <div class="model-picker" id="model-picker">
+                  <input type="hidden" name="local_model" id="local-model-value" value="{{ default_model }}">
+                  <button type="button" class="model-toggle" id="model-toggle">
+                    <span id="model-label">{{ default_model_label }}</span>
+                    <span class="caret">⌄</span>
+                  </button>
+                  <div class="model-menu" id="model-menu" role="listbox">
+                    {% for item in model_choices %}
+                    <button type="button" class="model-option{% if item.downloaded %} downloaded{% endif %}" data-value="{{ item.value }}" data-label="{{ item.label }}" role="option">
+                      <span class="option-label">{{ item.label }}</span>
+                      {% if item.downloaded %}<span class="badge">On device</span>{% endif %}
+                    </button>
+                    {% endfor %}
+                  </div>
+                </div>
+              </div>
+
+              <div class="row gx-3 gy-2">
+                <div class="col-12 col-sm-6">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="diarize" name="diarize">
+                    <label class="form-check-label" for="diarize">Speaker detection</label>
+                  </div>
+                </div>
+                <div class="col-12 col-sm-6">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="aggregate" name="aggregate">
+                    <label class="form-check-label" for="aggregate">Aggregate lines</label>
+                  </div>
+                </div>
+                <div class="col-12 col-sm-6">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="timestamps" name="timestamps">
+                    <label class="form-check-label" for="timestamps">Include timestamps</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <div class="feedback" id="form-feedback"></div>
+
+          <button type="submit" class="btn btn-primary btn-lg">Start transcription</button>
+        </form>
+      </div>
+
+      <div class="surface-card" id="progress-card">
+        <h3 class="mb-3">Progress tracker</h3>
+        <div class="progress-shell">
+          <div class="progress-track">
+            <div class="progress-bar" id="progress-bar" data-progress="0"></div>
+          </div>
+          <div class="progress-meta">
+            <span id="progress-stage">Waiting for a file…</span>
+            <span id="progress-percent">0%</span>
+          </div>
+        </div>
+        <div class="status-board" id="status-board">
+          <div class="status-row">
+            <div class="status-dot" id="status-dot" data-state="idle"></div>
+            <div class="status-copy">
+              <span class="status-title" id="status-title">No job running</span>
+              <span class="status-desc" id="status-desc">Start by uploading an audio file above.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="surface-card result-card" id="result-card">
+        <div>
+          <h3 class="mb-2">Transcript preview</h3>
+          <p class="muted mb-0">Review the generated text below, copy it, or download the full transcript.</p>
+        </div>
+        <div class="result-actions">
+          <button type="button" class="ghost-btn" id="copy-btn" disabled>Copy to clipboard</button>
+          <a class="ghost-btn" id="download-btn" href="#" download>Download .txt</a>
+        </div>
+        <pre id="result-text"></pre>
+      </div>
+    </div>
+
+    <div class="surface-card info-card">
+      <h3 class="mb-3">How it works</h3>
+      <ul>
+        <li><strong>Choose or drop a file:</strong> We securely upload it to the server running Whisper.</li>
+        <li><strong>Pick your engine:</strong> Use the OpenAI API for speed, or run locally with automatic GPU/MLX detection.</li>
+        <li><strong>Watch the progress:</strong> Real-time updates keep you informed while the job runs.</li>
+        <li><strong>Download or copy:</strong> Save the transcript or copy it directly from the preview.</li>
+      </ul>
+
+      <h4 class="mt-4">Best results</h4>
+      <p class="muted">High-quality audio under 30 minutes processes fastest. For longer sessions consider enabling aggregation to group similar phrases.</p>
+
+      <h4 class="mt-4">Need a nudge?</h4>
+      <p class="muted mb-3">You can repeat a run with different settings using the same file to compare output quality.</p>
+      <span class="info-badge">Tip</span>
+      <span class="muted ms-2">Speaker detection works best with clear separations between voices.</span>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const modeInput = document.getElementById('mode');
+  const modeChips = document.querySelectorAll('#mode-chips .chip');
+  const modelWrapper = document.getElementById('model-wrapper');
+  const modelPicker = document.getElementById('model-picker');
+  const modelToggle = document.getElementById('model-toggle');
+  const modelLabel = document.getElementById('model-label');
+  const modelMenu = document.getElementById('model-menu');
+  const modelInput = document.getElementById('local-model-value');
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('audio');
+  const fileNameEl = document.getElementById('file-name');
+  const form = document.getElementById('upload-form');
+  const feedback = document.getElementById('form-feedback');
+  const progressBar = document.getElementById('progress-bar');
+  const progressStage = document.getElementById('progress-stage');
+  const progressPercent = document.getElementById('progress-percent');
+  const statusDot = document.getElementById('status-dot');
+  const statusTitle = document.getElementById('status-title');
+  const statusDesc = document.getElementById('status-desc');
+  const resultCard = document.getElementById('result-card');
+  const resultText = document.getElementById('result-text');
+  const copyBtn = document.getElementById('copy-btn');
+  const downloadBtn = document.getElementById('download-btn');
+
+  let pollHandle = null;
+  let currentJob = null;
+  let downloadUrl = null;
+  let menuOpen = false;
+
+  function selectMode(value) {
+    modeInput.value = value;
+    modeChips.forEach((chip) => {
+      chip.classList.toggle('active', chip.dataset.mode === value);
+    });
+    const showModel = value === 'local';
+    modelWrapper.classList.toggle('active', showModel);
+  }
+
+  modeChips.forEach((chip) => {
+    chip.addEventListener('click', () => selectMode(chip.dataset.mode));
+  });
+
+  selectMode(modeInput.value || 'api');
+
+  function setProgress(value, stageText, description) {
+    const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
+    progressBar.dataset.progress = String(pct);
+    progressBar.style.transform = `scaleX(${Math.max(0.02, pct / 100)})`;
+    progressStage.textContent = stageText || 'Processing…';
+    progressPercent.textContent = `${pct}%`;
+    statusTitle.textContent = stageText || 'Processing…';
+    statusDesc.textContent = description || '';
+    if (pct >= 100) {
+      statusDot.dataset.state = 'done';
+    } else if (pct > 0) {
+      statusDot.dataset.state = 'active';
+    } else {
+      statusDot.dataset.state = 'idle';
+    }
+  }
+
+  function resetProgress() {
+    setProgress(0, 'Waiting for a file…', 'Start by uploading an audio file above.');
+    statusDot.dataset.state = 'idle';
+  }
+
+  function resetSession() {
+    if (pollHandle) {
+      clearTimeout(pollHandle);
+      pollHandle = null;
+    }
+    currentJob = null;
+    downloadUrl = null;
+    resetProgress();
+    resultCard.classList.remove('active');
+    resultText.textContent = '';
+    downloadBtn.href = '#';
+    copyBtn.disabled = true;
+    copyBtn.textContent = 'Copy to clipboard';
+  }
+
+  function showFeedback(message) {
+    feedback.textContent = message;
+    feedback.classList.add('visible');
+  }
+
+  function clearFeedback() {
+    feedback.textContent = '';
+    feedback.classList.remove('visible');
+  }
+
+  resetSession();
+
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  dropzone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dropzone.classList.add('dragging');
+  });
+
+  dropzone.addEventListener('dragleave', () => {
+    dropzone.classList.remove('dragging');
+  });
+
+  dropzone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    dropzone.classList.remove('dragging');
+    const files = event.dataTransfer.files;
+    if (files && files.length) {
+      fileInput.files = files;
+      updateFileName();
+    }
+  });
+
+  fileInput.addEventListener('change', updateFileName);
+
+  function updateFileName() {
+    clearFeedback();
+    if (fileInput.files.length) {
+      const file = fileInput.files[0];
+      fileNameEl.textContent = `${file.name} · ${(file.size / (1024 * 1024)).toFixed(2)} MB`;
+      setProgress(0.01, 'Ready to start', 'Hit “Start transcription” when you are ready.');
+    } else {
+      fileNameEl.textContent = '';
+      resetSession();
+    }
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearFeedback();
+
+    if (!fileInput.files.length) {
+      showFeedback('Please choose an audio or video file to continue.');
+      return;
+    }
+
+    try {
+      setProgress(0.08, 'Uploading…', 'Transferring your audio securely.');
+
+      const formData = new FormData(form);
+      const response = await fetch('/start', {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upload failed (${response.status})`);
+      }
+
+      const payload = await response.json();
+      currentJob = payload.job_id;
+      downloadUrl = payload.download_url;
+
+      setProgress(payload.progress || 0.12, payload.stage || 'Processing…', 'Setting up Whisper for transcription.');
+
+      if (pollHandle) {
+        clearTimeout(pollHandle);
+      }
+      pollLogs(payload.logs_url || `/logs/${currentJob}`);
+    } catch (err) {
+      console.error(err);
+      setProgress(0, 'Could not start transcription', 'Please try again or pick another file.');
+      showFeedback('Something went wrong while starting the job. Double-check the file and try again.');
+    }
+  });
+
+  async function pollLogs(url) {
+    if (!currentJob) {
+      return;
+    }
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Status check failed (${response.status})`);
+      }
+
+      const data = await response.json();
+      const progressValue = typeof data.progress === 'number' ? data.progress : 0;
+      const stageText = data.stage || 'Processing…';
+      let descText = 'Working through your audio.';
+      if (stageText.includes('Queued')) {
+        descText = 'Your file is in the queue and will start in a moment.';
+      } else if (stageText.includes('Starting')) {
+        descText = 'Setting up Whisper and analysing the audio file.';
+      } else if (stageText.includes('Running on')) {
+        descText = stageText.includes('NVIDIA')
+          ? 'Leveraging your GPU for the fastest possible run.'
+          : stageText.includes('MLX')
+            ? 'Using Apple MLX acceleration to speed things up.'
+            : 'Processing locally on the CPU.';
+      } else if (stageText.includes('Converting')) {
+        descText = 'Optimising audio format for transcription.';
+      } else if (stageText.includes('Cleaning')) {
+        descText = 'Cleaning silence and preparing audio chunks.';
+      } else if (stageText.includes('Transcribing')) {
+        descText = 'Running Whisper on your audio.';
+      } else if (stageText.includes('Detecting')) {
+        descText = 'Locating speaker changes.';
+      } else if (stageText.includes('Transcript ready')) {
+        descText = 'All done! Review the transcript below.';
+      } else if (stageText.includes('failed')) {
+        descText = 'We hit a snag during processing.';
+      }
+
+      setProgress(progressValue, stageText, descText);
+
+      if (data.status === 'done') {
+        resultText.textContent = data.result || '';
+        resultCard.classList.add('active');
+        if (data.result) {
+          copyBtn.disabled = false;
+        }
+        if (downloadUrl) {
+          downloadBtn.href = downloadUrl;
+        } else if (currentJob) {
+          downloadBtn.href = `/download/${currentJob}`;
+        }
+        pollHandle = null;
+        return;
+      }
+
+      if (data.status === 'error') {
+        setProgress(1, 'Processing failed', 'We hit an error while transcribing. Check the details and try again.');
+        resultCard.classList.remove('active');
+        pollHandle = null;
+        showFeedback('An error occurred while processing the audio. See status details above.');
+        return;
+      }
+
+      pollHandle = setTimeout(() => pollLogs(url), 1000);
+    } catch (err) {
+      console.error(err);
+      setProgress(progressBar.dataset.progress / 100, 'Connection hiccup…', 'Attempting to reconnect to the job.');
+      pollHandle = setTimeout(() => pollLogs(url), 2000);
+    }
+  }
+
+  copyBtn.addEventListener('click', async () => {
+    if (!resultText.textContent) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(resultText.textContent);
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => {
+        copyBtn.textContent = 'Copy to clipboard';
+      }, 1600);
+    } catch (err) {
+      console.error('Failed to copy', err);
+      copyBtn.textContent = 'Copy failed';
+      setTimeout(() => {
+        copyBtn.textContent = 'Copy to clipboard';
+      }, 1600);
+    }
+  });
+
+  function toggleMenu(forceState) {
+    menuOpen = typeof forceState === 'boolean' ? forceState : !menuOpen;
+    modelPicker.classList.toggle('open', menuOpen);
+  }
+
+  modelToggle.addEventListener('click', () => toggleMenu());
+
+  modelMenu.querySelectorAll('.model-option').forEach((option) => {
+    option.addEventListener('click', () => {
+      const value = option.dataset.value;
+      const label = option.dataset.label;
+      modelInput.value = value;
+      modelLabel.textContent = label;
+      toggleMenu(false);
+    });
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!modelPicker.contains(event.target)) {
+      toggleMenu(false);
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      toggleMenu(false);
+    }
+  });
+</script>
 {% endblock %}
