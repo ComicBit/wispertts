@@ -1,120 +1,83 @@
-{% extends 'base.html' %} {% block styles %}
+{% extends 'base.html' %}
+
+{% block title %}Audio Transcriber · Upload{% endblock %}
+
+{% block styles %}
 <style>
-  .layout-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.85fr);
-    gap: 24px;
+  .chip-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
   }
 
-  .stack {
+  .chip {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    align-items: flex-start;
+    gap: 0.35rem;
+    min-width: 11.5rem;
+    border-radius: 1rem;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    background: rgba(240, 244, 248, 0.7);
+    padding: 0.85rem 1.2rem;
+    font-weight: 600;
+    text-align: left;
+    color: #1f2937;
+    transition: all 0.2s ease;
+  }
+
+  .chip .chip-subtitle {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #6b7280;
+  }
+
+  .chip.active {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: #ffffff;
+    box-shadow: 0 12px 30px rgba(59, 130, 246, 0.32);
+  }
+
+  .chip.active .chip-subtitle {
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  .chip.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
   }
 
   .dropzone {
-    border: 2px dashed rgba(91, 75, 255, 0.3);
-    border-radius: 18px;
-    background: var(--brand-soft);
-    padding: 36px 26px;
+    position: relative;
+    border: 2px dashed rgba(59, 130, 246, 0.35);
+    border-radius: 1.25rem;
+    background: rgba(59, 130, 246, 0.08);
+    padding: 2.75rem 2rem;
     text-align: center;
-    transition: all 0.2s ease;
-    cursor: pointer;
+    transition: all 0.25s ease;
+    overflow: hidden;
   }
 
   .dropzone:hover,
   .dropzone.dragging {
-    border-color: var(--brand);
-    background: rgba(91, 75, 255, 0.12);
-    box-shadow: inset 0 0 0 1px rgba(91, 75, 255, 0.12);
-  }
-
-  .dropzone input {
-    display: none;
-  }
-
-  .dropzone .hint {
-    margin-top: 12px;
-    color: var(--muted);
-    font-size: 0.95rem;
+    border-color: rgba(59, 130, 246, 0.8);
+    background: rgba(59, 130, 246, 0.15);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
   }
 
   .dropzone .file-name {
-    margin-top: 10px;
+    margin-top: 1rem;
     font-weight: 600;
-    color: var(--brand);
+    color: #0f172a;
     word-break: break-word;
-  }
-
-  .chip-group {
-    display: inline-flex;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .chip {
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: white;
-    padding: 9px 18px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .chip.active {
-    background: var(--brand);
-    border-color: transparent;
-    color: white;
-    box-shadow: 0 10px 18px rgba(91, 75, 255, 0.28);
-  }
-
-  .chip.disabled {
-    opacity: 0.4;
-    pointer-events: none;
-  }
-
-  details.settings {
-    background: white;
-    border-radius: 16px;
-    border: 1px solid rgba(15, 23, 42, 0.08);
-    padding: 18px 20px;
-    transition: box-shadow 0.2s ease;
-  }
-
-  details.settings[open] {
-    box-shadow: 0 12px 22px rgba(15, 23, 42, 0.12);
-  }
-
-  details.settings summary {
-    list-style: none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    cursor: pointer;
-    font-weight: 600;
-  }
-
-  details.settings summary::-webkit-details-marker {
-    display: none;
-  }
-
-  details.settings .settings-grid {
-    margin-top: 18px;
-    display: grid;
-    gap: 18px;
-  }
-
-  .form-label {
-    font-weight: 600;
-    color: #1f2937;
   }
 
   .model-wrapper {
     display: none;
     flex-direction: column;
-    gap: 10px;
+    gap: 0.75rem;
   }
 
   .model-wrapper.active {
@@ -128,34 +91,35 @@
   .model-toggle {
     width: 100%;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    gap: 12px;
-    padding: 14px 18px;
-    border-radius: 14px;
-    border: 1px solid rgba(15, 23, 42, 0.12);
-    background: white;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.9rem 1.15rem;
+    border-radius: 1rem;
+    border: 1px solid rgba(48, 54, 61, 0.22);
+    background: rgba(255, 255, 255, 0.92);
     font-weight: 600;
     color: #1f2937;
-    transition: all 0.2s ease;
-    box-shadow: 0 8px 18px rgba(91, 75, 255, 0.06);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
   }
 
-  .model-toggle:focus-visible,
-  .model-toggle:hover {
-    border-color: rgba(91, 75, 255, 0.4);
-    box-shadow: 0 12px 24px rgba(91, 75, 255, 0.14);
+  .model-toggle:hover,
+  .model-toggle:focus-visible {
+    border-color: rgba(59, 130, 246, 0.6);
+    box-shadow: 0 12px 24px rgba(59, 130, 246, 0.18);
+    outline: none;
   }
 
   .model-toggle .caret {
-    width: 18px;
-    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
     border-radius: 999px;
-    background: rgba(91, 75, 255, 0.14);
-    display: grid;
-    place-items: center;
-    color: var(--brand);
-    font-size: 0.75rem;
+    background: rgba(59, 130, 246, 0.16);
+    color: #3b82f6;
+    font-size: 0.85rem;
     transition: transform 0.2s ease;
   }
 
@@ -165,19 +129,21 @@
 
   .model-menu {
     position: absolute;
-    top: calc(100% + 10px);
+    top: calc(100% + 0.65rem);
     left: 0;
     right: 0;
+    max-height: 18rem;
+    overflow-y: auto;
+    border-radius: 1rem;
+    border: 1px solid rgba(59, 130, 246, 0.22);
     background: rgba(255, 255, 255, 0.98);
-    border-radius: 16px;
-    border: 1px solid rgba(15, 23, 42, 0.08);
-    box-shadow: 0 22px 45px rgba(15, 23, 42, 0.18);
-    padding: 10px 0;
+    box-shadow: 0 26px 48px rgba(15, 23, 42, 0.18);
+    padding: 0.5rem 0;
     opacity: 0;
     pointer-events: none;
-    transform: translateY(-4px) scale(0.96);
+    transform: translateY(-8px) scale(0.96);
     transition: opacity 0.2s ease, transform 0.2s ease;
-    z-index: 20;
+    z-index: 40;
   }
 
   .model-picker.open .model-menu {
@@ -189,23 +155,33 @@
   .model-option {
     width: 100%;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    gap: 12px;
-    padding: 12px 18px;
-    background: transparent;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.9rem 1.15rem;
     border: none;
-    text-align: left;
+    background: transparent;
     font-weight: 500;
     color: #1f2937;
     cursor: pointer;
-    transition: background 0.12s ease, transform 0.12s ease;
+    transition: background 0.15s ease, color 0.15s ease;
   }
 
   .model-option:hover,
   .model-option:focus-visible {
-    background: rgba(91, 75, 255, 0.08);
-    transform: translateX(2px);
+    background: rgba(59, 130, 246, 0.08);
+    color: #1d4ed8;
+    outline: none;
+  }
+
+  .badge {
+    border-radius: 999px;
+    padding: 0.15rem 0.65rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: rgba(148, 163, 184, 0.24);
+    color: #475569;
+    white-space: nowrap;
   }
 
   .model-option.downloaded .badge {
@@ -213,40 +189,25 @@
     color: #15803d;
   }
 
-  .badge {
-    border-radius: 999px;
-    padding: 4px 10px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    background: rgba(148, 163, 184, 0.2);
-    color: #475569;
-    white-space: nowrap;
-  }
-
   .feedback {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.25);
-    color: #991b1b;
-    padding: 12px 14px;
-    border-radius: 10px;
-    font-weight: 500;
     display: none;
+    margin-top: 0.5rem;
+    border-radius: 0.9rem;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.14);
+    color: #b91c1c;
+    font-weight: 500;
+    padding: 0.75rem 1rem;
   }
 
   .feedback.visible {
     display: block;
   }
 
-  .progress-shell {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
   .progress-track {
     position: relative;
     width: 100%;
-    height: 12px;
+    height: 0.5rem;
     border-radius: 999px;
     background: rgba(148, 163, 184, 0.25);
     overflow: hidden;
@@ -255,360 +216,649 @@
   .progress-bar {
     position: absolute;
     inset: 0;
-    /* full width; scaled by transform */
     width: 100%;
     border-radius: 999px;
-    background: linear-gradient(90deg, var(--brand), #a855f7);
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
     transform-origin: left center;
     transform: scaleX(0);
-    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .progress-bar[data-progress="0"] {
     transform: scaleX(0.02);
   }
 
-  .progress-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-weight: 600;
-    color: #1f2937;
-  }
-
-  .status-board {
-    display: grid;
-    gap: 14px;
-    margin-top: 8px;
-  }
-
-  .status-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-  }
-
-  .status-copy {
-    display: flex;
+  .workflow-pane {
+    display: none;
     flex-direction: column;
-    gap: 4px;
+    gap: 1.5rem;
   }
 
-  .status-title {
+  .workflow-pane.active {
+    display: flex;
+  }
+
+  .workflow-tab {
+    border: none;
+    background: transparent;
+    border-radius: 999px;
+    padding: 0.6rem 1.4rem;
     font-weight: 600;
-    color: #0f172a;
+    color: inherit;
+    transition: all 0.2s ease;
   }
 
-  .status-desc {
-    color: var(--muted);
-    font-size: 0.92rem;
+  .workflow-tab.active {
+    background: #3b82f6;
+    color: #ffffff;
+    box-shadow: 0 12px 28px rgba(59, 130, 246, 0.32);
+  }
+
+  .workflow-tab:not(.active):hover,
+  .workflow-tab:focus-visible {
+    color: #1d4ed8;
+    outline: none;
+  }
+
+  .workflow-nav {
+    border-radius: 999px;
+    padding: 0.45rem 1.3rem;
+    font-weight: 500;
+    color: inherit;
+    transition: all 0.2s ease;
+  }
+
+  .workflow-nav.active {
+    background: #3b82f6;
+    color: #ffffff;
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.28);
+  }
+
+  .workflow-nav:not(.active):hover,
+  .workflow-nav:focus-visible {
+    color: #1d4ed8;
+    outline: none;
   }
 
   .result-card {
     display: none;
-    flex-direction: column;
-    gap: 18px;
   }
 
   .result-card.active {
     display: flex;
   }
 
-  .result-card pre {
-    background: white;
-    border-radius: 12px;
-    border: 1px solid rgba(15, 23, 42, 0.08);
-    padding: 18px;
-    max-height: 360px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    font-size: 0.95rem;
-  }
-
   .result-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 0.75rem;
   }
 
   .ghost-btn {
     border-radius: 999px;
-    border: 1px solid rgba(15, 23, 42, 0.12);
-    padding: 10px 18px;
-    background: white;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    background: transparent;
+    padding: 0.65rem 1.4rem;
     font-weight: 600;
-    color: var(--muted);
-    transition: all 0.15s ease;
+    color: #1f2937;
+    transition: all 0.2s ease;
   }
 
-  .ghost-btn:hover {
-    border-color: rgba(15, 23, 42, 0.2);
-    color: var(--brand);
+  .ghost-btn:hover,
+  .ghost-btn:focus-visible {
+    border-color: #3b82f6;
+    color: #1d4ed8;
+    outline: none;
   }
 
-  .info-card ul {
-    padding-left: 18px;
-    margin-bottom: 18px;
-    color: var(--muted);
+  .status-board {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 1rem;
   }
 
-  .info-card li {
-    margin-bottom: 8px;
+  .status-desc {
+    color: #6b7280;
+    font-size: 0.9rem;
   }
 
-  .info-badge {
+  .live-status-pill {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: rgba(15, 23, 42, 0.08);
+    gap: 0.5rem;
     border-radius: 999px;
-    font-size: 0.85rem;
+    background: rgba(59, 130, 246, 0.16);
+    padding: 0.35rem 0.85rem;
     font-weight: 600;
     color: #1f2937;
   }
 
-  @media (max-width: 1024px) {
-    .layout-grid {
-      grid-template-columns: 1fr;
+  .status-dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.6);
+  }
+
+  .status-dot.live {
+    background: #22c55e;
+    box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.24);
+    animation: pulse 1.4s ease infinite;
+  }
+
+  .status-dot.finalising {
+    background: #f97316;
+    box-shadow: 0 0 0 6px rgba(249, 115, 22, 0.22);
+  }
+
+  @keyframes pulse {
+    0% {
+      transform: scale(1);
+      box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.24);
+    }
+    70% {
+      transform: scale(1.15);
+      box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.14);
+    }
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.24);
     }
   }
 
-  @media (max-width: 640px) {
-    .dropzone {
-      padding: 28px;
-    }
+  .live-partial-output,
+  .live-final-text {
+    min-height: 10rem;
+    max-height: 18rem;
+    overflow-y: auto;
+    background: rgba(59, 130, 246, 0.08);
+    border-radius: 1rem;
+    padding: 1rem 1.2rem;
+    font-size: 0.95rem;
+    white-space: pre-wrap;
+  }
 
-    .result-card pre {
-      max-height: 280px;
-    }
+  .live-segments {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .live-segment {
+    border-radius: 0.9rem;
+    border: 1px solid rgba(59, 130, 246, 0.18);
+    background: rgba(59, 130, 246, 0.08);
+    padding: 0.85rem 1rem;
+  }
+
+  .live-segment-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-weight: 600;
+    color: #1f2937;
+    margin-bottom: 0.35rem;
+  }
+
+  .live-segment-time {
+    font-size: 0.8rem;
+    color: #6b7280;
+  }
+
+  .live-empty {
+    color: #6b7280;
+    font-size: 0.9rem;
+  }
+
+  .live-progress-track {
+    height: 0.45rem;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.28);
+    overflow: hidden;
+  }
+
+  .live-progress-bar {
+    height: 100%;
+    transform-origin: left center;
+    transform: scaleX(0);
+    background: linear-gradient(90deg, #3b82f6, #0ea5e9);
+    transition: transform 0.25s ease;
+  }
+
+  .live-timer {
+    font-family: "SFMono-Regular", ui-monospace, monospace;
+    font-weight: 600;
+    border-radius: 0.8rem;
+    background: rgba(59, 130, 246, 0.18);
+    padding: 0.5rem 1rem;
+    color: #1f2937;
+  }
+
+  .live-feedback {
+    margin-top: 0.75rem;
+    font-weight: 500;
+    color: #1d4ed8;
+  }
+
+  html.dark .chip {
+    background: rgba(13, 17, 23, 0.85);
+    border-color: rgba(96, 165, 250, 0.35);
+    color: #c9d1d9;
+  }
+
+  html.dark .chip .chip-subtitle {
+    color: #8b949e;
+  }
+
+  html.dark .dropzone {
+    border-color: rgba(59, 130, 246, 0.35);
+    background: rgba(22, 27, 34, 0.85);
+  }
+
+  html.dark .dropzone:hover,
+  html.dark .dropzone.dragging {
+    background: rgba(59, 130, 246, 0.2);
+  }
+
+  html.dark .dropzone .file-name {
+    color: #e2e8f0;
+  }
+
+  html.dark .model-toggle {
+    border-color: rgba(48, 54, 61, 0.5);
+    background: rgba(22, 27, 34, 0.9);
+    color: #c9d1d9;
+  }
+
+  html.dark .model-menu {
+    background: rgba(22, 27, 34, 0.98);
+    border-color: rgba(48, 54, 61, 0.6);
+  }
+
+  html.dark .model-option {
+    color: #c9d1d9;
+  }
+
+  html.dark .model-option:hover,
+  html.dark .model-option:focus-visible {
+    color: #93c5fd;
+    background: rgba(59, 130, 246, 0.22);
+  }
+
+  html.dark .badge {
+    background: rgba(148, 163, 184, 0.28);
+    color: #e2e8f0;
+  }
+
+  html.dark .model-option.downloaded .badge {
+    background: rgba(34, 197, 94, 0.28);
+    color: #bbf7d0;
+  }
+
+  html.dark .feedback {
+    background: rgba(239, 68, 68, 0.24);
+    border-color: rgba(239, 68, 68, 0.32);
+    color: #fecaca;
+  }
+
+  html.dark .progress-track {
+    background: rgba(48, 54, 61, 0.75);
+  }
+
+  html.dark .workflow-nav:not(.active):hover,
+  html.dark .workflow-tab:not(.active):hover,
+  html.dark .workflow-tab:focus-visible {
+    color: #93c5fd;
+  }
+
+  html.dark .ghost-btn {
+    border-color: rgba(59, 130, 246, 0.35);
+    color: #c9d1d9;
+  }
+
+  html.dark .ghost-btn:hover,
+  html.dark .ghost-btn:focus-visible {
+    border-color: #60a5fa;
+    color: #93c5fd;
+    background: rgba(59, 130, 246, 0.16);
+  }
+
+  html.dark .status-desc,
+  html.dark .live-segment-time,
+  html.dark .live-empty {
+    color: #8b949e;
+  }
+
+  html.dark .live-partial-output,
+  html.dark .live-final-text {
+    background: rgba(22, 27, 34, 0.75);
+  }
+
+  html.dark .live-segment {
+    border-color: rgba(59, 130, 246, 0.3);
+    background: rgba(59, 130, 246, 0.18);
+  }
+
+  html.dark .live-segment-heading {
+    color: #e2e8f0;
+  }
+
+  html.dark .live-progress-track {
+    background: rgba(48, 54, 61, 0.7);
+  }
+
+  html.dark .live-status-pill {
+    background: rgba(59, 130, 246, 0.24);
+    color: #c9d1d9;
+  }
+
+  html.dark .live-timer {
+    background: rgba(59, 130, 246, 0.26);
+    color: #e2e8f0;
+  }
+
+  html.dark .live-feedback {
+    color: #93c5fd;
   }
 </style>
-{% endblock %} {% block content %}
-<section class="stack">
-  <div class="surface-card">
-    <h2 class="mb-2">Transcribe audio without the guesswork</h2>
-    <p class="muted mb-0">
-      Drop a file, choose how you want Whisper to run, and we handle the rest –
-      transcripts, speaker detection, timestamps, and more.
-    </p>
-  </div>
+{% endblock %}
 
-  <div class="layout-grid">
-    <div class="stack">
-      <div class="surface-card">
-        <form
-          id="upload-form"
-          class="stack"
-          method="post"
-          action="/start"
-          enctype="multipart/form-data"
-        >
-          <div class="dropzone" id="dropzone">
-            <input
-              type="file"
-              id="audio"
-              name="audio"
-              accept="audio/*,video/*"
-            />
-            <div><strong>Drag &amp; drop audio</strong> or click to browse</div>
-            <div class="hint">
-              Supports WAV, MP3, M4A, WebM, MP4 and more (max 512&nbsp;MB)
+{% block content %}
+<div class="flex min-h-screen w-full flex-col">
+  <header class="sticky top-0 z-40 flex items-center justify-between border-b border-border-light bg-card-light/80 px-6 py-4 backdrop-blur-sm dark:border-border-dark dark:bg-card-dark/80">
+    <div class="flex items-center gap-4">
+      <div class="h-11 w-11 text-primary">
+        <svg fill="none" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+          <path d="M24 4C12.9543 4 4 7.58172 4 12C4 16.4183 12.9543 20 24 20C35.0457 20 44 16.4183 44 12C44 7.58172 35.0457 4 24 4Z" fill="currentColor" fill-opacity="0.3"></path>
+          <path d="M44 24C44 28.4183 35.0457 32 24 32C12.9543 32 4 28.4183 4 24C4 19.5817 12.9543 16 24 16C35.0457 16 44 19.5817 44 24Z" fill="currentColor" fill-opacity="0.6"></path>
+          <path d="M44 36C44 40.4183 35.0457 44 24 44C12.9543 44 4 40.4183 4 36C4 31.5817 12.9543 28 24 28C35.0457 28 44 31.5817 44 36Z" fill="currentColor"></path>
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-lg font-semibold text-text-light dark:text-text-dark">Audio Transcriber</h1>
+        <p class="text-sm text-text-muted-light dark:text-text-muted-dark">High-clarity speech-to-text made simple</p>
+      </div>
+    </div>
+    <nav class="flex items-center gap-3">
+      <div class="hidden items-center rounded-full border border-border-light bg-background-light/70 p-1 text-sm font-medium dark:border-border-dark dark:bg-background-dark/70 md:flex">
+        <a class="workflow-nav" data-workflow-target="live" href="#">Real-time</a>
+        <a class="workflow-nav active" data-workflow-target="upload" href="#" aria-current="page">Upload &amp; Settings</a>
+      </div>
+      <button class="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-white transition hover:opacity-90">
+        <span class="material-symbols-outlined">person</span>
+      </button>
+    </nav>
+  </header>
+
+  <main class="flex-1 overflow-y-auto p-4 md:p-8">
+    <div class="mx-auto w-full max-w-6xl space-y-8">
+      <div class="relative overflow-hidden rounded-2xl border border-border-light bg-card-light/90 p-6 shadow-xl shadow-primary/5 dark:border-border-dark dark:bg-card-dark/80 md:p-10">
+        <div class="absolute -top-20 right-0 h-48 w-48 rounded-full bg-primary/10 blur-3xl"></div>
+        <div class="flex flex-col gap-8">
+          <div class="relative z-10 flex flex-col gap-3">
+            <span class="inline-flex w-fit items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium uppercase tracking-wide text-primary">
+              Workflow
+            </span>
+            <h2 class="text-3xl font-bold text-text-light dark:text-text-dark md:text-4xl">Upload &amp; Settings</h2>
+            <p class="text-base text-text-muted-light dark:text-text-muted-dark">
+              Transcribe audio with powerful AI. Choose your file, fine-tune the engine, and follow progress in real time.
+            </p>
+          </div>
+
+          <div class="relative z-10 flex flex-wrap items-center justify-between gap-4">
+            <div id="workflow-tabs" class="inline-flex items-center gap-2 rounded-full border border-border-light bg-background-light/80 p-1 text-sm font-medium shadow-sm dark:border-border-dark dark:bg-background-dark/70">
+              <button type="button" class="workflow-tab active" data-target="upload" aria-pressed="true">Upload workflow</button>
+              <button type="button" class="workflow-tab" data-target="live" aria-pressed="false">Live capture</button>
             </div>
-            <div class="file-name" id="file-name"></div>
+            <p class="text-sm text-text-muted-light dark:text-text-muted-dark">
+              Supports WAV, MP3, MP4, M4A, FLAC · Up to 512&nbsp;MB per file
+            </p>
           </div>
 
-          <div>
-            <label for="language" class="form-label"
-              >Language (leave blank to auto-detect)</label
-            >
-            <input
-              class="form-control"
-              type="text"
-              id="language"
-              name="language"
-              placeholder="auto"
-            />
-          </div>
-
-          <details class="settings">
-            <summary>
-              Advanced transcription settings
-              <span class="info-badge">optional</span>
-            </summary>
-            <div class="settings-grid">
-              <div>
-                <label class="form-label">Engine</label>
-                <div class="chip-group" id="mode-chips">
-                  <button type="button" class="chip" data-mode="api">
-                    OpenAI API
-                  </button>
-                  <button type="button" class="chip" data-mode="local">
-                    Run locally
-                  </button>
-                </div>
-                <input type="hidden" name="mode" id="mode" value="api" />
-              </div>
-
-              <div class="model-wrapper" id="model-wrapper">
-                <label class="form-label" for="local-model-value"
-                  >Model size</label
+          <div class="workflow-pane active" data-pane="upload" id="upload-pane">
+            <div class="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+              <div class="flex flex-col gap-6">
+                <form
+                  id="upload-form"
+                  class="flex flex-col gap-6 rounded-2xl border border-border-light bg-card-light/80 p-6 shadow-lg backdrop-blur-md dark:border-border-dark dark:bg-card-dark/70"
+                  method="post"
+                  action="/start"
+                  enctype="multipart/form-data"
                 >
-                <div class="model-picker" id="model-picker">
-                  <input
-                    type="hidden"
-                    name="local_model"
-                    id="local-model-value"
-                    value="{{ default_model }}"
-                  />
-                  <button type="button" class="model-toggle" id="model-toggle">
-                    <span id="model-label">{{ default_model_label }}</span>
-                    <span class="caret">⌄</span>
-                  </button>
-                  <div class="model-menu" id="model-menu" role="listbox">
-                    {% for item in model_choices %}
-                    <button
-                      type="button"
-                      class="model-option{% if item.downloaded %} downloaded{% endif %}"
-                      data-value="{{ item.value }}"
-                      data-label="{{ item.label }}"
-                      role="option"
-                    >
-                      <span class="option-label">{{ item.label }}</span>
-                      {% if item.downloaded %}<span class="badge"
-                        >On device</span
-                      >{% endif %}
+                  <div class="flex flex-col gap-3">
+                    <label class="text-sm font-semibold text-text-light dark:text-text-dark" for="audio">
+                      Audio file
+                    </label>
+                    <div class="dropzone" id="dropzone">
+                      <input
+                        type="file"
+                        id="audio"
+                        name="audio"
+                        accept="audio/*,video/*"
+                        class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                      />
+                      <div class="flex flex-col items-center gap-4">
+                        <div class="flex h-16 w-16 items-center justify-center rounded-full bg-primary/15">
+                          <span class="material-symbols-outlined text-4xl text-primary">cloud_upload</span>
+                        </div>
+                        <div>
+                          <p class="text-base font-semibold text-text-light dark:text-text-dark">Click to upload or drag and drop</p>
+                          <p class="text-sm text-text-muted-light dark:text-text-muted-dark">We keep your audio private and secure during processing.</p>
+                        </div>
+                        <div class="file-name text-sm text-primary" id="file-name"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="grid gap-4 md:grid-cols-2">
+                    <div class="flex flex-col gap-2">
+                      <label class="text-sm font-semibold text-text-light dark:text-text-dark" for="language">Language (optional)</label>
+                      <input
+                        class="w-full rounded-xl border border-border-light bg-background-light/80 px-4 py-3 text-sm text-text-light placeholder:text-text-muted-light focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30 dark:border-border-dark dark:bg-card-dark/70 dark:text-text-dark dark:placeholder:text-text-muted-dark"
+                        type="text"
+                        id="language"
+                        name="language"
+                        placeholder="Auto-detect"
+                      />
+                    </div>
+                    <div class="flex flex-col gap-2">
+                      <span class="text-sm font-semibold text-text-light dark:text-text-dark">Processing engine</span>
+                      <div class="chip-group" id="mode-chips">
+                        <button type="button" class="chip w-full" data-mode="api">
+                          <span>Cloud API</span>
+                          <span class="chip-subtitle">Fastest results with gpt-4o-mini</span>
+                        </button>
+                        <button type="button" class="chip w-full" data-mode="local">
+                          <span>Local processing</span>
+                          <span class="chip-subtitle">Offline with GPU / MLX support</span>
+                        </button>
+                      </div>
+                      <input type="hidden" name="mode" id="mode" value="api" />
+                    </div>
+                  </div>
+
+                  <div class="model-wrapper" id="model-wrapper">
+                    <label class="text-sm font-semibold text-text-light dark:text-text-dark" for="local-model-value">Model size</label>
+                    <div class="model-picker" id="model-picker">
+                      <input type="hidden" name="local_model" id="local-model-value" value="{{ default_model }}" />
+                      <button type="button" class="model-toggle" id="model-toggle">
+                        <span id="model-label">{{ default_model_label }}</span>
+                        <span class="caret">⌄</span>
+                      </button>
+                      <div class="model-menu" id="model-menu" role="listbox">
+                        {% for item in model_choices %}
+                        <button
+                          type="button"
+                          class="model-option{% if item.downloaded %} downloaded{% endif %}"
+                          data-value="{{ item.value }}"
+                          data-label="{{ item.label }}"
+                          role="option"
+                        >
+                          <span class="option-label">{{ item.label }}</span>
+                          {% if item.downloaded %}<span class="badge">On device</span>{% endif %}
+                        </button>
+                        {% endfor %}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="grid gap-4 md:grid-cols-2">
+                    <label class="flex items-center justify-between gap-4 rounded-2xl border border-border-light bg-background-light/80 p-4 dark:border-border-dark dark:bg-background-dark/60">
+                      <div>
+                        <p class="font-semibold text-text-light dark:text-text-dark">Speaker detection</p>
+                        <p class="text-sm text-text-muted-light dark:text-text-muted-dark">Identify unique speakers throughout the conversation.</p>
+                      </div>
+                      <span class="relative inline-flex h-6 w-11 items-center">
+                        <input class="peer sr-only" type="checkbox" id="diarize" name="diarize" checked />
+                        <span class="absolute h-full w-full rounded-full bg-border-light transition peer-checked:bg-primary/30 dark:bg-border-dark"></span>
+                        <span class="absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition-transform peer-checked:translate-x-5 peer-checked:bg-primary"></span>
+                      </span>
+                    </label>
+                    <label class="flex items-center justify-between gap-4 rounded-2xl border border-border-light bg-background-light/80 p-4 dark:border-border-dark dark:bg-background-dark/60">
+                      <div>
+                        <p class="font-semibold text-text-light dark:text-text-dark">Include timestamps</p>
+                        <p class="text-sm text-text-muted-light dark:text-text-muted-dark">Attach start and end times for each transcribed segment.</p>
+                      </div>
+                      <span class="relative inline-flex h-6 w-11 items-center">
+                        <input class="peer sr-only" type="checkbox" id="timestamps" name="timestamps" />
+                        <span class="absolute h-full w-full rounded-full bg-border-light transition peer-checked:bg-primary/30 dark:bg-border-dark"></span>
+                        <span class="absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition-transform peer-checked:translate-x-5 peer-checked:bg-primary"></span>
+                      </span>
+                    </label>
+                  </div>
+
+                  <div class="feedback" id="form-feedback"></div>
+
+                  <div class="flex justify-end">
+                    <button type="submit" class="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-base font-semibold text-white shadow-lg shadow-primary/30 transition hover:bg-primary/90">
+                      <span class="material-symbols-outlined">bolt</span>
+                      Start transcription
                     </button>
-                    {% endfor %}
                   </div>
+                </form>
+
+                <div class="rounded-2xl border border-border-light bg-card-light/80 p-6 shadow-lg dark:border-border-dark dark:bg-card-dark/70" id="progress-card">
+                  <div class="flex flex-col gap-4">
+                    <div class="flex items-center justify-between gap-4">
+                      <div>
+                        <h3 class="text-lg font-semibold text-text-light dark:text-text-dark">Progress tracker</h3>
+                        <p class="text-sm text-text-muted-light dark:text-text-muted-dark" id="status-title">Monitor each stage as Whisper works.</p>
+                      </div>
+                      <span class="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">Live</span>
+                    </div>
+                    <div class="flex flex-col gap-3">
+                      <div class="progress-track">
+                        <div class="progress-bar" id="progress-bar" data-progress="0"></div>
+                      </div>
+                      <div class="flex items-center justify-between text-sm font-semibold text-text-light dark:text-text-dark">
+                        <span id="progress-stage">Waiting for a file…</span>
+                        <span id="progress-percent">0%</span>
+                      </div>
+                    </div>
+                    <div class="status-board" id="status-board">
+                      <div class="text-sm text-text-muted-light dark:text-text-muted-dark" id="status-desc">Start by uploading an audio file above.</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="result-card flex-col gap-4 rounded-2xl border border-border-light bg-card-light/80 p-6 shadow-lg dark:border-border-dark dark:bg-card-dark/70" id="result-card">
+                  <div class="flex flex-col gap-1">
+                    <h3 class="text-lg font-semibold text-text-light dark:text-text-dark">Transcript preview</h3>
+                    <p class="text-sm text-text-muted-light dark:text-text-muted-dark">Review the generated text, copy it instantly, or download to keep working offline.</p>
+                  </div>
+                  <div class="result-actions">
+                    <button type="button" class="ghost-btn" id="copy-btn" disabled>Copy to clipboard</button>
+                    <a class="ghost-btn" id="download-btn" href="#" download>Download .txt</a>
+                  </div>
+                  <pre class="max-h-96 overflow-y-auto rounded-xl border border-border-light bg-background-light/80 p-4 text-sm text-text-light dark:border-border-dark dark:bg-background-dark/70 dark:text-text-dark" id="result-text"></pre>
                 </div>
               </div>
 
-              <div class="row gx-3 gy-2">
-                <div class="col-12 col-sm-6">
-                  <div class="form-check">
-                    <input
-                      class="form-check-input"
-                      type="checkbox"
-                      id="diarize"
-                      name="diarize"
-                      checked
-                    />
-                    <label class="form-check-label" for="diarize"
-                      >Speaker detection</label
-                    >
+              <aside class="flex h-fit flex-col gap-4 rounded-2xl border border-border-light bg-card-light/70 p-6 shadow-lg dark:border-border-dark dark:bg-card-dark/70">
+                <h3 class="text-lg font-semibold text-text-light dark:text-text-dark">Pro tips for crisp transcripts</h3>
+                <ul class="list-disc space-y-2 pl-5 text-sm text-text-muted-light dark:text-text-muted-dark">
+                  <li>Use high-quality audio under 30 minutes for the fastest turnaround.</li>
+                  <li>Enable local processing when you need full privacy or offline support.</li>
+                  <li>Keep speakers separated—diarization works best with clean audio channels.</li>
+                  <li>Retranscribe the same file with different options to compare accuracy.</li>
+                </ul>
+                <div class="rounded-xl border border-dashed border-primary/40 bg-primary/10 p-4 text-sm text-text-light dark:text-text-dark">
+                  <p class="font-semibold text-primary">Need inspiration?</p>
+                  <p class="mt-1 text-text-muted-light dark:text-text-muted-dark">Try uploading a short interview and explore diarized segments in the preview.</p>
+                </div>
+              </aside>
+            </div>
+          </div>
+
+          <div class="workflow-pane" data-pane="live" id="live-pane">
+            <div class="grid gap-6 lg:grid-cols-2">
+              <div class="flex flex-col gap-6 rounded-2xl border border-border-light bg-card-light/80 p-6 shadow-lg dark:border-border-dark dark:bg-card-dark/70" id="live-control-card">
+                <div class="flex items-center justify-between gap-4">
+                  <div>
+                    <h3 class="text-lg font-semibold text-text-light dark:text-text-dark">Live capture</h3>
+                    <p class="text-sm text-text-muted-light dark:text-text-muted-dark">Stream audio from your microphone, receive partial updates, and finish with a high-accuracy pass.</p>
+                  </div>
+                  <span class="live-status-pill">
+                    <span class="status-dot" id="live-status-dot"></span>
+                    <span id="live-status-text">Idle</span>
+                  </span>
+                </div>
+                <div class="flex flex-wrap items-center gap-3">
+                  <button type="button" class="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-primary/30 transition hover:bg-primary/90" id="live-start-btn">
+                    <span class="material-symbols-outlined">radio_button_checked</span>
+                    Start live capture
+                  </button>
+                  <button type="button" class="ghost-btn" id="live-stop-btn" disabled>Stop</button>
+                  <span class="live-timer" id="live-timer">00:00</span>
+                </div>
+                <div class="live-progress" id="live-progress" style="display: none;">
+                  <div class="live-progress-track">
+                    <div class="live-progress-bar" id="live-progress-bar"></div>
+                  </div>
+                  <div class="mt-2 flex items-center justify-between text-sm text-text-muted-light dark:text-text-muted-dark">
+                    <span id="live-progress-stage">Waiting…</span>
+                    <span id="live-progress-percent">0%</span>
                   </div>
                 </div>
-                <!-- Aggregate lines behavior is always enabled; control removed -->
-                <div class="col-12 col-sm-6">
-                  <div class="form-check">
-                    <input
-                      class="form-check-input"
-                      type="checkbox"
-                      id="timestamps"
-                      name="timestamps"
-                    />
-                    <label class="form-check-label" for="timestamps"
-                      >Include timestamps</label
-                    >
+                <div class="live-feedback" id="live-feedback"></div>
+              </div>
+
+              <div class="space-y-6">
+                <div class="rounded-2xl border border-border-light bg-card-light/80 p-6 shadow-lg dark:border-border-dark dark:bg-card-dark/70" id="live-partial-card">
+                  <h3 class="text-lg font-semibold text-text-light dark:text-text-dark">Realtime transcript</h3>
+                  <p class="text-sm text-text-muted-light dark:text-text-muted-dark">Partial updates stream as you speak. We refine everything after you stop.</p>
+                  <div class="live-partial-output" id="live-partial-output"></div>
+                </div>
+
+                <div class="rounded-2xl border border-border-light bg-card-light/80 p-6 shadow-lg dark:border-border-dark dark:bg-card-dark/70" id="live-final-card">
+                  <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <h3 class="text-lg font-semibold text-text-light dark:text-text-dark">Final transcript</h3>
+                      <p class="text-sm text-text-muted-light dark:text-text-muted-dark" id="live-final-desc">Stop the capture to trigger the high-accuracy transcription pass.</p>
+                    </div>
+                    <div class="result-actions">
+                      <button type="button" class="ghost-btn" id="live-copy-btn" disabled>Copy</button>
+                      <a class="ghost-btn" id="live-download-btn" href="#" download>Download .txt</a>
+                    </div>
+                  </div>
+                  <pre class="live-final-text" id="live-final-text"></pre>
+                  <div class="live-segments" id="live-segments">
+                    <span class="live-empty">Speaker-labelled segments will appear here after processing completes.</span>
                   </div>
                 </div>
               </div>
             </div>
-          </details>
-
-          <div class="feedback" id="form-feedback"></div>
-
-          <button type="submit" class="btn btn-primary btn-lg">
-            Start transcription
-          </button>
-        </form>
-      </div>
-
-      <div class="surface-card" id="progress-card">
-        <h3 class="mb-3">Progress tracker</h3>
-        <div class="progress-shell">
-          <div class="progress-track">
-            <div class="progress-bar" id="progress-bar" data-progress="0"></div>
-          </div>
-          <div class="progress-meta">
-            <span id="progress-stage">Waiting for a file…</span>
-            <span id="progress-percent">0%</span>
           </div>
         </div>
-        <div class="status-board" id="status-board">
-          <div class="status-row">
-            <div class="status-copy">
-              <span class="status-desc" id="status-desc"
-                >Start by uploading an audio file above.</span
-              >
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="surface-card result-card" id="result-card">
-        <div>
-          <h3 class="mb-2">Transcript preview</h3>
-          <p class="muted mb-0">
-            Review the generated text below, copy it, or download the full
-            transcript.
-          </p>
-        </div>
-        <div class="result-actions">
-          <button type="button" class="ghost-btn" id="copy-btn" disabled>
-            Copy to clipboard
-          </button>
-          <a class="ghost-btn" id="download-btn" href="#" download
-            >Download .txt</a
-          >
-        </div>
-        <pre id="result-text"></pre>
       </div>
     </div>
+  </main>
+</div>
+{% endblock %}
 
-    <div class="surface-card info-card">
-      <h3 class="mb-3">How it works</h3>
-      <ul>
-        <li>
-          <strong>Choose or drop a file:</strong> We securely upload it to the
-          server running Whisper.
-        </li>
-        <li>
-          <strong>Pick your engine:</strong> Use the OpenAI API for speed, or
-          run locally with automatic GPU/MLX detection.
-        </li>
-        <li>
-          <strong>Watch the progress:</strong> Real-time updates keep you
-          informed while the job runs.
-        </li>
-        <li>
-          <strong>Download or copy:</strong> Save the transcript or copy it
-          directly from the preview.
-        </li>
-      </ul>
-
-      <h4 class="mt-4">Best results</h4>
-      <p class="muted">
-        High-quality audio under 30 minutes processes fastest. For longer
-        sessions consider enabling aggregation to group similar phrases.
-      </p>
-
-      <h4 class="mt-4">Need a nudge?</h4>
-      <p class="muted mb-3">
-        You can repeat a run with different settings using the same file to
-        compare output quality.
-      </p>
-      <span class="info-badge">Tip</span>
-      <span class="muted ms-2"
-        >Speaker detection works best with clear separations between
-        voices.</span
-      >
-    </div>
-  </div>
-</section>
-{% endblock %} {% block scripts %}
+{% block scripts %}
 <script>
+  const streamingConfig = {{ streaming_config | tojson }};
   const modeInput = document.getElementById("mode");
   const modeChips = document.querySelectorAll("#mode-chips .chip");
   const modelWrapper = document.getElementById("model-wrapper");
@@ -632,11 +882,44 @@
   const resultText = document.getElementById("result-text");
   const copyBtn = document.getElementById("copy-btn");
   const downloadBtn = document.getElementById("download-btn");
+  const tabs = document.getElementById("workflow-tabs");
+  const tabButtons = tabs ? tabs.querySelectorAll(".workflow-tab") : [];
+  const panes = document.querySelectorAll(".workflow-pane");
+  const workflowNavLinks = document.querySelectorAll("[data-workflow-target]");
+  const liveStartBtn = document.getElementById("live-start-btn");
+  const liveStopBtn = document.getElementById("live-stop-btn");
+  const liveStatusDot = document.getElementById("live-status-dot");
+  const liveStatusText = document.getElementById("live-status-text");
+  const liveTimerEl = document.getElementById("live-timer");
+  const liveFeedback = document.getElementById("live-feedback");
+  const livePartialOutput = document.getElementById("live-partial-output");
+  const liveFinalText = document.getElementById("live-final-text");
+  const liveFinalDesc = document.getElementById("live-final-desc");
+  const liveCopyBtn = document.getElementById("live-copy-btn");
+  const liveDownloadBtn = document.getElementById("live-download-btn");
+  const liveSegments = document.getElementById("live-segments");
+  const liveProgress = document.getElementById("live-progress");
+  const liveProgressBar = document.getElementById("live-progress-bar");
+  const liveProgressStage = document.getElementById("live-progress-stage");
+  const liveProgressPercent = document.getElementById("live-progress-percent");
 
   let pollHandle = null;
   let currentJob = null;
   let downloadUrl = null;
   let menuOpen = false;
+  let liveState = "idle"; // idle | streaming | finalising | done
+  let liveTimerHandle = null;
+  let liveTimerSeconds = 0;
+  let liveSocket = null;
+  let mediaStream = null;
+  let audioContext = null;
+  let processorNode = null;
+  let sourceNode = null;
+  let livePartials = [];
+  let liveSegmentsData = [];
+  let liveConnectTimeout = null;
+  let liveChunkMonitor = null;
+  let liveLastChunkAt = 0;
 
   function selectMode(value) {
     modeInput.value = value;
@@ -647,11 +930,47 @@
     modelWrapper.classList.toggle("active", showModel);
   }
 
+  function selectWorkflow(target) {
+    panes.forEach((pane) => {
+      pane.classList.toggle("active", pane.dataset.pane === target);
+    });
+    tabButtons.forEach((button) => {
+      const isActive = button.dataset.target === target;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+    workflowNavLinks.forEach((link) => {
+      const isActive = link.dataset.workflowTarget === target;
+      link.classList.toggle("active", isActive);
+      if (isActive) {
+        link.setAttribute("aria-current", "page");
+      } else {
+        link.removeAttribute("aria-current");
+      }
+    });
+    if (target === "upload") {
+      resetLiveSession(true);
+    }
+  }
+
   modeChips.forEach((chip) => {
     chip.addEventListener("click", () => selectMode(chip.dataset.mode));
   });
 
   selectMode(modeInput.value || "api");
+
+  tabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      selectWorkflow(button.dataset.target);
+    });
+  });
+
+  workflowNavLinks.forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      selectWorkflow(link.dataset.workflowTarget);
+    });
+  });
 
   function setProgress(value, stageText, description) {
     const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
@@ -659,18 +978,12 @@
     progressBar.style.transform = `scaleX(${Math.max(0.02, pct / 100)})`;
     progressStage.textContent = stageText || "Processing…";
     progressPercent.textContent = `${pct}%`;
-    // While a job is actively running hide the small static status box to avoid
-    // repeating messages (e.g. "No job running / Running Whisper on your audio").
-    // Only show the status-board when idle or the job completes.
     if (pct > 0 && pct < 100) {
       if (statusBoard) statusBoard.style.display = "none";
     } else {
       if (statusBoard) statusBoard.style.display = "";
     }
-    // Only the progress area should show live progress text; keep the small
-    // status-title unchanged to preserve the idle hint when no job is running.
     statusDesc.textContent = pct >= 100 ? description || "" : "";
-    // visual state handled by the progress bar; removed the small status dot.
   }
 
   function resetProgress() {
@@ -679,7 +992,6 @@
       "Waiting for a file…",
       "Start by uploading an audio file above."
     );
-    // status dot removed
   }
 
   function resetSession() {
@@ -708,6 +1020,7 @@
   }
 
   resetSession();
+  resetLiveSession();
 
   dropzone.addEventListener("click", () => fileInput.click());
 
@@ -910,6 +1223,499 @@
     }
   });
 
+  function resetLiveSession(full) {
+    liveState = "idle";
+    liveStatusText.textContent = "Idle";
+    liveStatusDot.className = "status-dot";
+    liveFeedback.textContent = "";
+    livePartialOutput.textContent = "";
+    liveFinalText.textContent = "";
+    liveSegments.innerHTML = '<span class="live-empty">Speaker-labelled segments will appear here after processing completes.</span>';
+    liveCopyBtn.disabled = true;
+    liveDownloadBtn.href = "#";
+    liveProgress.style.display = "none";
+    liveStartBtn.disabled = false;
+    liveStopBtn.disabled = true;
+    liveTimerEl.textContent = "00:00";
+    livePartials = [];
+    liveSegmentsData = [];
+    liveLastChunkAt = 0;
+    if (full) {
+      teardownLiveAudio();
+    }
+  }
+
+  function startLiveTimer() {
+    stopLiveTimer();
+    liveTimerSeconds = 0;
+    liveTimerEl.textContent = formatTimer(liveTimerSeconds);
+    liveTimerHandle = setInterval(() => {
+      liveTimerSeconds += 1;
+      liveTimerEl.textContent = formatTimer(liveTimerSeconds);
+    }, 1000);
+  }
+
+  function stopLiveTimer() {
+    if (liveTimerHandle) {
+      clearInterval(liveTimerHandle);
+      liveTimerHandle = null;
+    }
+  }
+
+  function formatTimer(totalSeconds) {
+    const minutes = Math.floor(totalSeconds / 60)
+      .toString()
+      .padStart(2, "0");
+    const seconds = Math.floor(totalSeconds % 60)
+      .toString()
+      .padStart(2, "0");
+    return `${minutes}:${seconds}`;
+  }
+
+  function updateLiveStatus(state, message) {
+    console.debug('[live] updateLiveStatus', state, message);
+    liveState = state;
+    liveStatusText.textContent = message;
+    liveStatusDot.className = "status-dot";
+    if (state === "streaming") {
+      liveStatusDot.classList.add("live");
+    } else if (state === "finalising") {
+      liveStatusDot.classList.add("finalising");
+    }
+  }
+
+  function updateLiveProgress(value, stageText) {
+    const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
+    liveProgress.style.display = "block";
+    liveProgressBar.style.transform = `scaleX(${Math.max(0.02, pct / 100)})`;
+    liveProgressStage.textContent = stageText || "Processing";
+    liveProgressPercent.textContent = `${pct}%`;
+  }
+
+  function appendPartial(text, isFinal, ts) {
+    if (!text) {
+      return;
+    }
+    const entry = {
+      text,
+      final: !!isFinal,
+      timestamp: ts,
+    };
+    livePartials.push(entry);
+    if (livePartials.length > 400) {
+      livePartials = livePartials.slice(-400);
+    }
+    const preview = livePartials
+      .map((item) => `${item.final ? "✓ " : "» "}${item.text}`)
+      .join("\n");
+    livePartialOutput.textContent = preview;
+    livePartialOutput.scrollTop = livePartialOutput.scrollHeight;
+  }
+
+  function renderSegments(segments) {
+    liveSegmentsData = segments || [];
+    if (!segments || !segments.length) {
+      liveSegments.innerHTML = '<span class="live-empty">No speaker segments detected yet.</span>';
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    segments.forEach((segment) => {
+      const item = document.createElement("div");
+      item.className = "live-segment";
+      const heading = document.createElement("div");
+      heading.className = "live-segment-heading";
+      heading.textContent = segment.speaker || "Speaker";
+      const time = document.createElement("span");
+      time.className = "live-segment-time";
+      time.textContent = formatSegmentTime(segment.start, segment.end);
+      heading.appendChild(time);
+      const body = document.createElement("div");
+      body.textContent = segment.text;
+      item.appendChild(heading);
+      item.appendChild(body);
+      fragment.appendChild(item);
+    });
+    liveSegments.innerHTML = "";
+    liveSegments.appendChild(fragment);
+  }
+
+  function formatSegmentTime(start, end) {
+    if (typeof start !== "number" || typeof end !== "number") {
+      return "";
+    }
+    return `${formatTimestamp(start)} – ${formatTimestamp(end)}`;
+  }
+
+  function formatTimestamp(value) {
+    const sec = Math.max(0, value || 0);
+    const hh = Math.floor(sec / 3600)
+      .toString()
+      .padStart(2, "0");
+    const mm = Math.floor((sec % 3600) / 60)
+      .toString()
+      .padStart(2, "0");
+    const ss = (sec % 60).toFixed(2).padStart(5, "0");
+    return `${hh}:${mm}:${ss}`;
+  }
+
+  function handleLiveError(message) {
+    liveFeedback.textContent = message;
+    liveStatusDot.className = "status-dot";
+    liveStatusText.textContent = "Error";
+    liveStartBtn.disabled = false;
+    liveStopBtn.disabled = true;
+    stopLiveTimer();
+    if (liveConnectTimeout) {
+      clearTimeout(liveConnectTimeout);
+      liveConnectTimeout = null;
+    }
+    if (liveChunkMonitor) {
+      clearInterval(liveChunkMonitor);
+      liveChunkMonitor = null;
+    }
+    teardownLiveAudio();
+  }
+
+  function teardownLiveAudio() {
+    if (liveConnectTimeout) {
+      clearTimeout(liveConnectTimeout);
+      liveConnectTimeout = null;
+    }
+    if (liveChunkMonitor) {
+      clearInterval(liveChunkMonitor);
+      liveChunkMonitor = null;
+    }
+    if (processorNode) {
+      try {
+        processorNode.disconnect();
+      } catch (err) {
+        console.debug("processor disconnect failed", err);
+      }
+      processorNode.onaudioprocess = null;
+      processorNode = null;
+    }
+    if (sourceNode) {
+      try {
+        sourceNode.disconnect();
+      } catch (err) {
+        console.debug("source disconnect failed", err);
+      }
+      sourceNode = null;
+    }
+    if (audioContext) {
+      try {
+        audioContext.close();
+      } catch (err) {
+        console.debug("audio context close failed", err);
+      }
+      audioContext = null;
+    }
+    if (mediaStream) {
+      mediaStream.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch (err) {
+          console.debug("track stop failed", err);
+        }
+      });
+      mediaStream = null;
+    }
+    if (liveSocket) {
+      try {
+        liveSocket.close();
+      } catch (err) {
+        console.debug("socket close failed", err);
+      }
+      liveSocket = null;
+    }
+  }
+
+    async function startLive() {
+      console.debug('[live] startLive called, state:', liveState);
+      if (!liveStartBtn || liveState === "streaming") {
+        return;
+      }
+      resetLiveSession(true);
+      liveFeedback.textContent = "";
+      liveStartBtn.disabled = true;
+      liveStopBtn.disabled = false;
+      updateLiveStatus("streaming", "Starting…");
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        handleLiveError("Microphone capture isn't supported in this browser.");
+        return;
+      }
+
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        console.debug('[live] gotUserMedia success');
+      } catch (err) {
+        console.error("Mic permission denied", err);
+        handleLiveError("Could not access microphone. Please allow access in your browser.");
+        return;
+      }
+
+      const desiredSampleRate = streamingConfig.sample_rate || 16000;
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: desiredSampleRate,
+        });
+        if (audioContext.state === "suspended") {
+          await audioContext.resume();
+        }
+      } catch (err) {
+        console.warn("Falling back to default AudioContext", err);
+        try {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioContext.state === "suspended") {
+            await audioContext.resume();
+          }
+        } catch (innerErr) {
+          console.error("AudioContext init failed", innerErr);
+          handleLiveError("Audio initialisation failed. Try reloading the page.");
+          return;
+        }
+      }
+
+      const wsUrl = streamingConfig.ws_url || "/ws/stream";
+      const fullUrl = wsUrl.startsWith("ws")
+        ? wsUrl
+        : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}${wsUrl}`;
+      try {
+        liveSocket = new WebSocket(fullUrl);
+        liveSocket.binaryType = "arraybuffer";
+        console.debug('[live] WebSocket created', fullUrl);
+      } catch (err) {
+        console.error("WebSocket init failed", err);
+        handleLiveError("Failed to connect to streaming server.");
+        teardownLiveAudio();
+        return;
+      }
+
+      if (liveConnectTimeout) {
+        clearTimeout(liveConnectTimeout);
+      }
+      liveConnectTimeout = setTimeout(() => {
+        if (!liveSocket || liveSocket.readyState !== WebSocket.OPEN) {
+          console.error("Streaming handshake timeout");
+          handleLiveError("Could not connect to the streaming server. Is it running?");
+        }
+      }, 5000);
+
+      const bufferSize = 4096;
+      processorNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
+      sourceNode = audioContext.createMediaStreamSource(mediaStream);
+      const inputRate = audioContext.sampleRate;
+      const ratio = inputRate / desiredSampleRate;
+      const downsample = ratio > 0 ? ratio : 1;
+
+      processorNode.onaudioprocess = (event) => {
+        if (!liveSocket || liveSocket.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        const input = event.inputBuffer.getChannelData(0);
+        const samplesLength = Math.floor(input.length / downsample);
+        if (!samplesLength) {
+          return;
+        }
+        const pcm = new Int16Array(samplesLength);
+        for (let i = 0; i < samplesLength; i += 1) {
+          const sample = input[Math.floor(i * downsample)] * 0x7fff;
+          pcm[i] = Math.max(-32768, Math.min(32767, sample));
+        }
+        try {
+          console.debug('[live] sending chunk', pcm.length);
+          liveSocket.send(pcm.buffer);
+          liveLastChunkAt = Date.now();
+        } catch (err) {
+          console.debug("Failed to send audio chunk", err);
+        }
+      };
+
+      sourceNode.connect(processorNode);
+      processorNode.connect(audioContext.destination);
+
+      liveLastChunkAt = Date.now();
+      if (liveChunkMonitor) {
+        clearInterval(liveChunkMonitor);
+      }
+      liveChunkMonitor = setInterval(() => {
+        if (liveState !== "streaming") {
+          return;
+        }
+        if (Date.now() - liveLastChunkAt > 4000) {
+          console.warn("No audio frames detected in the last 4 seconds");
+          handleLiveError("No microphone audio detected. Check input device or permissions.");
+        }
+      }, 2000);
+
+      liveSocket.addEventListener("open", () => {
+        console.debug('[live] WebSocket open');
+        if (liveConnectTimeout) {
+          clearTimeout(liveConnectTimeout);
+          liveConnectTimeout = null;
+        }
+        updateLiveStatus("streaming", "Live");
+        liveFeedback.textContent = "";
+        startLiveTimer();
+        const payload = {
+          type: "start",
+          language: form.language.value || null,
+          mode: modeInput.value || "api",
+          local_model: modelInput.value || "base",
+          diarize: form.diarize.checked,
+          timestamps: form.timestamps.checked,
+          sample_rate: desiredSampleRate,
+        };
+        try {
+          liveSocket?.send(JSON.stringify(payload));
+          console.debug('[live] Sent start payload', payload);
+        } catch (err) {
+          console.debug("Failed to send start payload", err);
+        }
+      });
+
+      liveSocket.addEventListener("message", (event) => {
+        console.debug('[live] WebSocket message', event.data);
+        try {
+          const payload = JSON.parse(event.data);
+          handleLiveMessage(payload);
+        } catch (err) {
+          console.debug("Invalid streaming payload", err, event.data);
+        }
+      });
+
+      liveSocket.addEventListener("error", (event) => {
+        console.error("Streaming socket error", event);
+        handleLiveError("Connection error while streaming audio.");
+        teardownLiveAudio();
+      });
+
+      liveSocket.addEventListener("close", () => {
+        console.debug('[live] WebSocket closed');
+        if (liveConnectTimeout) {
+          clearTimeout(liveConnectTimeout);
+          liveConnectTimeout = null;
+        }
+        if (liveChunkMonitor) {
+          clearInterval(liveChunkMonitor);
+          liveChunkMonitor = null;
+        }
+        if (liveState === "streaming") {
+          updateLiveStatus("finalising", "Finalising…");
+        }
+        stopLiveTimer();
+        liveStopBtn.disabled = true;
+        liveStartBtn.disabled = false;
+      });
+    }
+
+    function stopLive() {
+      if (!liveStopBtn || liveState !== "streaming") {
+        return;
+      }
+      updateLiveStatus("finalising", "Finalising…");
+      liveStopBtn.disabled = true;
+      liveStartBtn.disabled = true;
+      stopLiveTimer();
+      if (processorNode) {
+        try {
+          processorNode.disconnect();
+        } catch (err) {
+          console.debug("processor disconnect", err);
+        }
+      }
+      if (sourceNode) {
+        try {
+          sourceNode.disconnect();
+        } catch (err) {
+          console.debug("source disconnect", err);
+        }
+      }
+      if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+        try {
+          liveSocket.send(JSON.stringify({ type: "stop" }));
+        } catch (err) {
+          console.debug("Failed to send stop payload", err);
+        }
+      }
+    }
+
+    function handleLiveMessage(payload) {
+      console.debug('[live] handleLiveMessage', payload);
+      const { type } = payload || {};
+      if (!type) {
+        return;
+      }
+      if (type === "ready") {
+        liveFeedback.textContent = "Ready to capture.";
+        return;
+      }
+      if (type === "status") {
+        const message = payload.message || "";
+        updateLiveStatus(liveState === "streaming" ? "streaming" : "finalising", message || "Status update");
+        if (message) {
+          liveFeedback.textContent = message;
+        }
+        if (typeof payload.progress === "number") {
+          updateLiveProgress(payload.progress, message || payload.stage || "Processing");
+        }
+        return;
+      }
+      if (type === "partial") {
+        appendPartial(payload.text, payload.final, payload.timestamp);
+        return;
+      }
+      if (type === "final_progress") {
+        const progress = typeof payload.progress === "number" ? payload.progress : 0;
+        updateLiveProgress(progress, payload.stage || "Processing");
+        if (payload.description) {
+          liveFeedback.textContent = payload.description;
+        }
+        if (payload.status === "error") {
+          handleLiveError(payload.description || "Processing error.");
+        }
+        return;
+      }
+      if (type === "final") {
+        liveFinalText.textContent = payload.transcript || "";
+        liveFinalDesc.textContent = payload.transcript
+          ? "High-accuracy pass complete. Review diarized output below."
+          : "No transcript returned.";
+        liveCopyBtn.disabled = !payload.transcript;
+        if (payload.download_url) {
+          liveDownloadBtn.href = payload.download_url;
+        }
+        renderSegments(payload.segments || []);
+        liveState = "done";
+        liveStopBtn.disabled = true;
+        liveStartBtn.disabled = false;
+        liveFeedback.textContent = "All done!";
+        updateLiveStatus("done", "Complete");
+        liveProgress.style.display = "none";
+        teardownLiveAudio();
+        return;
+      }
+      if (type === "error") {
+        handleLiveError(payload.message || "Streaming error");
+        teardownLiveAudio();
+      }
+    }
+
+  liveStartBtn?.addEventListener("click", startLive);
+  liveStopBtn?.addEventListener("click", stopLive);
+
+  liveCopyBtn?.addEventListener("click", async () => {
+    if (!liveFinalText.textContent) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(liveFinalText.textContent);
+      liveFeedback.textContent = "Copied transcript to clipboard.";
+    } catch (err) {
+      liveFeedback.textContent = "Copy failed.";
+    }
+  });
+
   function toggleMenu(forceState) {
     menuOpen = typeof forceState === "boolean" ? forceState : !menuOpen;
     modelPicker.classList.toggle("open", menuOpen);
@@ -938,5 +1744,7 @@
       toggleMenu(false);
     }
   });
+
+  selectWorkflow("upload");
 </script>
 {% endblock %}

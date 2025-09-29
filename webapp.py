@@ -62,6 +62,75 @@ _ensure_dir(UPLOAD_DIR)
 _ensure_dir(OUT_DIR)
 
 
+STREAMING_WS_URL_ENV = os.environ.get("STREAMING_WS_URL") or os.environ.get("STREAMING_SERVER_URL")
+STREAMING_HOST_ENV = os.environ.get("STREAMING_HOST")
+STREAMING_PATH_ENV = os.environ.get("STREAMING_PATH", "/ws/stream")
+STREAMING_PORT_ENV = os.environ.get("STREAMING_PORT")
+try:
+    STREAMING_SAMPLE_RATE = int(os.environ.get("STREAMING_SAMPLE_RATE", "16000"))
+except ValueError:
+    STREAMING_SAMPLE_RATE = 16000
+
+
+def _default_streaming_ws_url() -> str:
+    if STREAMING_WS_URL_ENV:
+        return STREAMING_WS_URL_ENV
+
+    from flask import request
+    from urllib.parse import urlsplit
+
+    path = STREAMING_PATH_ENV or "/ws/stream"
+
+    try:
+        parsed_request = urlsplit(request.host_url)
+    except RuntimeError:
+        parsed_request = urlsplit("http://localhost/")
+
+    host_override = STREAMING_HOST_ENV
+    if host_override:
+        if host_override.startswith(("ws://", "wss://")):
+            base = host_override.rstrip("/")
+            return base if path == "/" else f"{base}{path}"
+        host = host_override
+        use_port = STREAMING_PORT_ENV or "8001"
+    else:
+        host = parsed_request.hostname or "localhost"
+        use_port = STREAMING_PORT_ENV or "8001"
+
+    req_scheme = parsed_request.scheme or "http"
+    ws_scheme = "wss" if req_scheme == "https" else "ws"
+
+    if host.startswith(("ws://", "wss://")):
+        base = host.rstrip("/")
+        return base if path == "/" else f"{base}{path}"
+
+    # If host already contains an explicit port (IPv4 or IPv6 with brackets), respect it.
+    if host.startswith("[") and "]" in host:
+        # IPv6 literal, possibly with port (e.g. [::1]:9000)
+        closing = host.find("]")
+        remainder = host[closing + 1 :]
+        if remainder.startswith(":"):
+            return f"{ws_scheme}://{host}{path}"
+        return f"{ws_scheme}://{host}:{use_port or '8001'}{path}"
+
+    if ":" in host:
+        # Assume host already includes port (e.g. example.com:9000).
+        return f"{ws_scheme}://{host}{path}"
+
+    port = use_port or "8001"
+    return f"{ws_scheme}://{host}:{port}{path}"
+
+
+@app.context_processor
+def inject_streaming_config():
+    return {
+        "streaming_config": {
+            "ws_url": _default_streaming_ws_url(),
+            "sample_rate": STREAMING_SAMPLE_RATE,
+        }
+    }
+
+
 @dataclass
 class StageState:
     key: str
@@ -300,7 +369,10 @@ def _ordered_model_choices() -> List[Dict[str, object]]:
 
 def _run_job(job: Job, *, mode: str, local_model: str, language: Optional[str],
              diarize: bool, aggregate: bool, timestamps: bool,
-             mlx_batch_size: int = 12, mlx_quant: Optional[str] = None):
+             mlx_batch_size: int = 12, mlx_quant: Optional[str] = None,
+             trim_silence: bool = True):
+    import logging
+    logger = logging.getLogger("webapp._run_job")
     # Capture tx.log into the job while still printing to stdout
     orig_log = tx.log
 
@@ -346,6 +418,7 @@ def _run_job(job: Job, *, mode: str, local_model: str, language: Optional[str],
     tx.log = web_log  # monkey-patch
 
     try:
+        logger.debug(f"[_run_job] Starting job {job.id} (infile={job.infile}, outfile={job.outfile})")
         # Serialize runs to keep logging sane
         run_lock.acquire()
         # Keep web default simple and robust: default to API unless user chose otherwise
@@ -392,14 +465,21 @@ def _run_job(job: Job, *, mode: str, local_model: str, language: Optional[str],
             lang=(language or None),
             show_ts=timestamps,
             agg=aggregate,
+            trim_silence=trim_silence,
         )
-
+        logger.debug(f"[_run_job] tx.run finished for job {job.id}")
+        if os.path.exists(job.outfile):
+            logger.debug(f"[_run_job] Output file exists for job {job.id}: {job.outfile}")
+        else:
+            logger.error(f"[_run_job] Output file missing for job {job.id}: {job.outfile}")
         with open(job.outfile, "r", encoding="utf-8") as fh:
             job.result = fh.read()
         job.status = "done"
+        logger.debug(f"[_run_job] Job {job.id} status set to 'done'")
         set_progress(1.0, "Transcript ready")
     except Exception as e:
         job.status = "error"
+        logger.error(f"[_run_job] Job {job.id} failed: {e}")
         job.error = f"{e}\n\n" + traceback.format_exc()
         job.log += f"\n[ERROR] {e}\n"
         set_progress(1.0, "Processing failed")
@@ -468,6 +548,7 @@ def start():
             "diarize": diarize,
             "aggregate": aggregate,
             "timestamps": timestamps,
+            "trim_silence": True,
         }
     )
     job.tracker = JobProgressTracker(diarize=diarize, mode=mode)
@@ -490,6 +571,7 @@ def start():
             timestamps=timestamps,
             mlx_quant=mlx_quant,
             mlx_batch_size=mlx_batch_size,
+            trim_silence=True,
         ),
         daemon=True,
     )
