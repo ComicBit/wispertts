@@ -16,6 +16,7 @@ Features
 from __future__ import annotations
 import argparse
 import itertools
+import json
 import os
 import platform
 import re
@@ -55,6 +56,51 @@ WHISPER_CACHE = os.path.join(os.path.dirname(__file__), "models", "whisper")
 # ------------------------------ HELPERS -------------------------------------
 def log(msg: str):
     print(msg, flush=True)
+
+
+def _emit_progress(stage: str, current: float, total: float | int | None, *, label: str | None = None,
+                   detail: str | None = None, extra: dict | None = None):
+    """Emit a structured progress event.
+
+    Parameters
+    ----------
+    stage: str
+        Canonical stage key (e.g. "convert", "transcribe").
+    current: float
+        Amount completed within the stage.
+    total: float | int | None
+        Total amount for the stage. If ``None`` or ``<= 0`` we treat it as ``1``.
+    label: str, optional
+        Human readable label for the current stage.
+    detail: str, optional
+        Secondary text that may be displayed in UI.
+    extra: dict, optional
+        Additional metadata (e.g. counts) to pass along.
+    """
+
+    if total is None or total <= 0:
+        total = 1.0
+    payload = {
+        "stage": stage,
+        "current": max(float(current), 0.0),
+        "total": float(total),
+    }
+    if label:
+        # Remove leading bracketed tokens like "[STEP]" or "[SUCCESS]" for UI
+        try:
+            lab = re.sub(r"^\[[^\]]+\]\s*", "", str(label)).strip()
+        except Exception:
+            lab = str(label)
+        payload["label"] = lab
+    if detail:
+        payload["detail"] = detail
+    if extra:
+        payload["extra"] = extra
+    try:
+        log(f"[PROGRESS] {json.dumps(payload, separators=(',', ':'), ensure_ascii=False)}")
+    except Exception:
+        # Progress emission is best-effort; never break the pipeline.
+        pass
 
 
 def is_apple_silicon() -> bool:
@@ -131,14 +177,19 @@ def _dur(p):
         return None
 
 
-def _run(cmd: list[str], total: Optional[float], desc: str):
+def _run(cmd: list[str], total: Optional[float], desc: str, *, stage: str | None = None):
+    if stage:
+        _emit_progress(stage, 0, total or 1, label=desc)
     if not total:
         with tqdm(
             total=1, desc=desc, bar_format="{l_bar}{bar}|{elapsed}", ncols=80
         ) as pb:
             subprocess.run(cmd, stderr=subprocess.DEVNULL, check=True)
             pb.update(1)
-            return
+        if stage:
+            _emit_progress(stage, 1, 1, label=desc)
+        return
+
     with tqdm(total=int(total), desc=desc, unit="s", ncols=80) as pb:
         proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True)
         for line in proc.stderr:
@@ -146,9 +197,13 @@ def _run(cmd: list[str], total: Optional[float], desc: str):
                 h, mn, s = m.groups()
                 pb.n = min(int(float(s) + int(mn) * 60 + int(h) * 3600), pb.total)
                 pb.refresh()
+                if stage:
+                    _emit_progress(stage, pb.n, pb.total, label=desc)
         proc.wait()
         pb.n = pb.total
         pb.refresh()
+        if stage:
+            _emit_progress(stage, pb.total, pb.total, label=desc)
         if proc.returncode:
             raise subprocess.CalledProcessError(proc.returncode, cmd)
 
@@ -183,7 +238,12 @@ def convert(src: str) -> str:
         return src
 
     dst = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
-    _run(["ffmpeg", "-y", "-i", src, dst], _dur(src), "[STEP] Converting → MP3")
+    _run(
+        ["ffmpeg", "-y", "-i", src, dst],
+        _dur(src),
+        "Converting → MP3",
+        stage="convert",
+    )
     return dst
 
 
@@ -194,7 +254,10 @@ def remove_silence(p):
         "stop_periods=-1:stop_duration=0.3:stop_threshold=-50dB"
     )
     _run(
-        ["ffmpeg", "-y", "-i", p, "-af", filt, dst], _dur(p), "[STEP] Removing silence"
+        ["ffmpeg", "-y", "-i", p, "-af", filt, dst],
+        _dur(p),
+        "Removing silence",
+        stage="silence",
     )
     audio = AudioSegment.from_file(dst)
     os.unlink(dst)
@@ -232,6 +295,7 @@ def chunk(audio):
     with tqdm(
         total=_estimate_chunks(audio), desc="[STEP] Chunking", unit="chunk", ncols=80
     ) as pb:
+        _emit_progress("chunk", 0, pb.total, label="[STEP] Chunking", extra={"chunks_total": pb.total})
         while start < total:
             end = min(start + lim, total)
             if end < total and audio[end - 2000 : end].dBFS < -45:
@@ -241,6 +305,21 @@ def chunk(audio):
             chunks.append((tmp, start / 1000, end / 1000))
             start = end
             pb.update(1)
+            _emit_progress(
+                "chunk",
+                pb.n,
+                pb.total,
+                label="[STEP] Chunking",
+                extra={"chunks_total": pb.total, "chunks_done": pb.n},
+            )
+        if pb.total:
+            _emit_progress(
+                "chunk",
+                pb.total,
+                pb.total,
+                label="[STEP] Chunking",
+                extra={"chunks_total": pb.total, "chunks_done": pb.total},
+            )
     return chunks
 
 
@@ -349,11 +428,14 @@ def load_mlx(tag: str, batch_size: int = 12, quant: Optional[str] = None):
     mlx_model = MLX_MODEL_MAP.get(tag, tag)
     
     try:
-        log(f"[STEP] Loading Lightning Whisper MLX '{mlx_model}' (batch_size={batch_size}, quant={quant}) …")
+        label = f"Loading Lightning Whisper MLX '{mlx_model}'"
+        _emit_progress("load_model", 0, 1, label=label, extra={"backend": "mlx", "batch_size": batch_size, "quant": quant})
+        log(f"{label} (batch_size={batch_size}, quant={quant}) …")
         mdl = LightningWhisperMLX(model=mlx_model, batch_size=batch_size, quant=quant)
     except Exception as e:
         raise RuntimeError(f"Failed to load MLX model '{mlx_model}': {e}")
     
+    _emit_progress("load_model", 1, 1, label=f"MLX model '{mlx_model}' ready", extra={"backend": "mlx"})
     _MLX_MODEL_CACHE[cache_key] = mdl
     return mdl
 
@@ -391,7 +473,9 @@ def load_local(tag: str, dev: torch.device):
             "Local mode requested but `openai-whisper` is not installed."
         )
     try:
-        log(f"[STEP] Loading Whisper '{tag}' on {dev} …")
+        label = f"Loading Whisper '{tag}' on {dev}"
+        _emit_progress("load_model", 0, 1, label=label, extra={"backend": "local", "device": str(dev)})
+        log(f"{label} …")
         mdl = whisper.load_model(tag, device=str(dev), download_root=WHISPER_CACHE)
     except (RuntimeError, NotImplementedError) as e:
         err = str(e)
@@ -404,6 +488,7 @@ def load_local(tag: str, dev: torch.device):
         else:
             raise
     _MODEL_CACHE[tag] = mdl
+    _emit_progress("load_model", 1, 1, label=f"Local model '{tag}' ready", extra={"backend": "local", "device": str(dev)})
     return mdl
 
 
@@ -458,10 +543,32 @@ def transcribe_chunks(chs, *, mode, cli=None, mdl=None, lang):
     with tqdm(
         total=len(chs), desc="[STEP] Transcribing", unit="chunk", ncols=80
     ) as pb, ThreadPoolExecutor(workers) as pool:
+        _emit_progress(
+            "transcribe",
+            0,
+            pb.total or 1,
+            label="Transcribing audio",
+            extra={"units_total": pb.total, "units_done": 0},
+        )
         for fut in as_completed(pool.submit(work, x) for x in enumerate(chs)):
             i, *row = fut.result()
             res[i] = tuple(row)
             pb.update(1)
+            _emit_progress(
+                "transcribe",
+                pb.n,
+                pb.total or 1,
+                label="Transcribing audio",
+                extra={"units_total": pb.total, "units_done": pb.n},
+            )
+        if pb.total:
+            _emit_progress(
+                "transcribe",
+                pb.total,
+                pb.total,
+                label="Transcribing audio",
+                extra={"units_total": pb.total, "units_done": pb.total},
+            )
     return res
 
 
@@ -503,7 +610,8 @@ def diarize_tx(audio, *, mode, cli=None, mdl=None, lang):
 
     device = prefer_device()
     pipe.to(device)
-    log(f"[STEP] Diarization on {device}")
+    log(f"Diarization on {device}")
+    _emit_progress("diarize", 0, 1, label="Running diarization")
 
     item = {"waveform": waveform, "sample_rate": sr}
     try:
@@ -511,7 +619,7 @@ def diarize_tx(audio, *, mode, cli=None, mdl=None, lang):
             with ProgressHook() as hook:
                 diar = pipe(item, hook=hook)
         else:
-            with Spinner("[STEP] Diarization in progress"):
+            with Spinner("Diarization in progress"):
                 diar = pipe(item)
     finally:
         buf.close()
@@ -534,6 +642,14 @@ def diarize_tx(audio, *, mode, cli=None, mdl=None, lang):
 
     res = [None] * len(jobs)
 
+    _emit_progress(
+        "diarize",
+        1,
+        1,
+        label="Diarization complete",
+        extra={"jobs": len(jobs)},
+    )
+
     def work(j):
         i, sp, pt, st, ed = j
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
@@ -552,10 +668,32 @@ def diarize_tx(audio, *, mode, cli=None, mdl=None, lang):
     with tqdm(
         total=len(jobs), desc="[STEP] Transcribing segments", unit="seg", ncols=80
     ) as pb, ThreadPoolExecutor(MAX_CONC_REQUESTS if mode == "api" else 1) as pool:
+        _emit_progress(
+            "transcribe_segments",
+            0,
+            pb.total or 1,
+            label="Transcribing diarized segments",
+            extra={"units_total": pb.total, "units_done": 0},
+        )
         for fut in as_completed(pool.submit(work, j) for j in jobs):
             i, *row = fut.result()
             res[i] = tuple(row)
             pb.update(1)
+            _emit_progress(
+                "transcribe_segments",
+                pb.n,
+                pb.total or 1,
+                label="Transcribing diarized segments",
+                extra={"units_total": pb.total, "units_done": pb.n},
+            )
+        if pb.total:
+            _emit_progress(
+                "transcribe_segments",
+                pb.total,
+                pb.total,
+                label="Transcribing diarized segments",
+                extra={"units_total": pb.total, "units_done": pb.total},
+            )
     return res
 
 
@@ -584,6 +722,7 @@ def to_lines(rows, show):
 # ------------------------------ ORCHESTRATE ---------------------------------
 def run(infile, outfile, *, mode, local_tag, mlx_batch_size, mlx_quant, diarize, lang, show_ts, agg):
     cli = mdl = None
+    _emit_progress("prepare", 0, 1, label="Preparing transcription job")
     if mode == "api":
         if openai is None:
             raise RuntimeError("openai package missing.")
@@ -594,6 +733,7 @@ def run(infile, outfile, *, mode, local_tag, mlx_batch_size, mlx_quant, diarize,
             timeout=httpx.Timeout(120, read=PER_REQ_TIMEOUT),
             max_retries=3,
         )
+        _emit_progress("load_model", 1, 1, label="Whisper API ready", extra={"backend": "api"})
     elif mode == "mlx":
         mdl = load_mlx(local_tag, batch_size=mlx_batch_size, quant=mlx_quant)
     else:  # local
@@ -608,6 +748,7 @@ def run(infile, outfile, *, mode, local_tag, mlx_batch_size, mlx_quant, diarize,
             log("[INFO] Using MLX backend for local transcription")
             mdl = load_mlx(local_tag, batch_size=mlx_batch_size, quant=mlx_quant)
 
+    _emit_progress("prepare", 1, 1, label="Transcription pipeline ready")
     mp3 = convert(infile)
     cleaned = remove_silence(mp3)
     if mp3 != infile:
@@ -619,9 +760,11 @@ def run(infile, outfile, *, mode, local_tag, mlx_batch_size, mlx_quant, diarize,
     )
     if agg:
         rows = merge(rows)
+    _emit_progress("finalize", 0, 1, label="Finalizing transcript")
     with open(outfile, "w", encoding="utf-8") as fh:
         fh.write("\n".join(to_lines(rows, show_ts)))
     log(f"[SUCCESS] Transcript → {os.path.abspath(outfile)}")
+    _emit_progress("finalize", 1, 1, label="Transcript ready")
 
 
 # ------------------------------ CLI -----------------------------------------

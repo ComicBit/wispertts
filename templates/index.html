@@ -1,5 +1,4 @@
-{% extends 'base.html' %}
-{% block styles %}
+{% extends 'base.html' %} {% block styles %}
 <style>
   .layout-grid {
     display: grid;
@@ -256,7 +255,8 @@
   .progress-bar {
     position: absolute;
     inset: 0;
-    width: 12%;
+    /* full width; scaled by transform */
+    width: 100%;
     border-radius: 999px;
     background: linear-gradient(90deg, var(--brand), #a855f7);
     transform-origin: left center;
@@ -286,40 +286,6 @@
     display: flex;
     align-items: flex-start;
     gap: 12px;
-  }
-
-  .status-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    margin-top: 4px;
-    background: rgba(148, 163, 184, 0.45);
-    position: relative;
-    overflow: hidden;
-  }
-
-  .status-dot::after {
-    content: "";
-    position: absolute;
-    inset: -6px;
-    background: rgba(91, 75, 255, 0.35);
-    border-radius: 50%;
-    transform: scale(0);
-    opacity: 0;
-    transition: transform 0.3s ease, opacity 0.3s ease;
-  }
-
-  .status-dot[data-state="active"] {
-    background: var(--brand);
-  }
-
-  .status-dot[data-state="active"]::after {
-    transform: scale(1);
-    opacity: 1;
-  }
-
-  .status-dot[data-state="done"] {
-    background: rgba(34, 197, 94, 0.85);
   }
 
   .status-copy {
@@ -418,29 +384,51 @@
     }
   }
 </style>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 <section class="stack">
   <div class="surface-card">
     <h2 class="mb-2">Transcribe audio without the guesswork</h2>
-    <p class="muted mb-0">Drop a file, choose how you want Whisper to run, and we handle the rest – transcripts, speaker detection, timestamps, and more.</p>
+    <p class="muted mb-0">
+      Drop a file, choose how you want Whisper to run, and we handle the rest –
+      transcripts, speaker detection, timestamps, and more.
+    </p>
   </div>
 
   <div class="layout-grid">
     <div class="stack">
       <div class="surface-card">
-        <form id="upload-form" class="stack" method="post" action="/start" enctype="multipart/form-data">
+        <form
+          id="upload-form"
+          class="stack"
+          method="post"
+          action="/start"
+          enctype="multipart/form-data"
+        >
           <div class="dropzone" id="dropzone">
-            <input type="file" id="audio" name="audio" accept="audio/*,video/*">
+            <input
+              type="file"
+              id="audio"
+              name="audio"
+              accept="audio/*,video/*"
+            />
             <div><strong>Drag &amp; drop audio</strong> or click to browse</div>
-            <div class="hint">Supports WAV, MP3, M4A, WebM, MP4 and more (max 512&nbsp;MB)</div>
+            <div class="hint">
+              Supports WAV, MP3, M4A, WebM, MP4 and more (max 512&nbsp;MB)
+            </div>
             <div class="file-name" id="file-name"></div>
           </div>
 
           <div>
-            <label for="language" class="form-label">Language (leave blank to auto-detect)</label>
-            <input class="form-control" type="text" id="language" name="language" placeholder="auto">
+            <label for="language" class="form-label"
+              >Language (leave blank to auto-detect)</label
+            >
+            <input
+              class="form-control"
+              type="text"
+              id="language"
+              name="language"
+              placeholder="auto"
+            />
           </div>
 
           <details class="settings">
@@ -452,25 +440,44 @@
               <div>
                 <label class="form-label">Engine</label>
                 <div class="chip-group" id="mode-chips">
-                  <button type="button" class="chip" data-mode="api">OpenAI API</button>
-                  <button type="button" class="chip" data-mode="local">Run locally</button>
+                  <button type="button" class="chip" data-mode="api">
+                    OpenAI API
+                  </button>
+                  <button type="button" class="chip" data-mode="local">
+                    Run locally
+                  </button>
                 </div>
-                <input type="hidden" name="mode" id="mode" value="api">
+                <input type="hidden" name="mode" id="mode" value="api" />
               </div>
 
               <div class="model-wrapper" id="model-wrapper">
-                <label class="form-label" for="local-model-value">Model size</label>
+                <label class="form-label" for="local-model-value"
+                  >Model size</label
+                >
                 <div class="model-picker" id="model-picker">
-                  <input type="hidden" name="local_model" id="local-model-value" value="{{ default_model }}">
+                  <input
+                    type="hidden"
+                    name="local_model"
+                    id="local-model-value"
+                    value="{{ default_model }}"
+                  />
                   <button type="button" class="model-toggle" id="model-toggle">
                     <span id="model-label">{{ default_model_label }}</span>
                     <span class="caret">⌄</span>
                   </button>
                   <div class="model-menu" id="model-menu" role="listbox">
                     {% for item in model_choices %}
-                    <button type="button" class="model-option{% if item.downloaded %} downloaded{% endif %}" data-value="{{ item.value }}" data-label="{{ item.label }}" role="option">
+                    <button
+                      type="button"
+                      class="model-option{% if item.downloaded %} downloaded{% endif %}"
+                      data-value="{{ item.value }}"
+                      data-label="{{ item.label }}"
+                      role="option"
+                    >
                       <span class="option-label">{{ item.label }}</span>
-                      {% if item.downloaded %}<span class="badge">On device</span>{% endif %}
+                      {% if item.downloaded %}<span class="badge"
+                        >On device</span
+                      >{% endif %}
                     </button>
                     {% endfor %}
                   </div>
@@ -480,20 +487,30 @@
               <div class="row gx-3 gy-2">
                 <div class="col-12 col-sm-6">
                   <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="diarize" name="diarize">
-                    <label class="form-check-label" for="diarize">Speaker detection</label>
+                    <input
+                      class="form-check-input"
+                      type="checkbox"
+                      id="diarize"
+                      name="diarize"
+                      checked
+                    />
+                    <label class="form-check-label" for="diarize"
+                      >Speaker detection</label
+                    >
                   </div>
                 </div>
+                <!-- Aggregate lines behavior is always enabled; control removed -->
                 <div class="col-12 col-sm-6">
                   <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="aggregate" name="aggregate">
-                    <label class="form-check-label" for="aggregate">Aggregate lines</label>
-                  </div>
-                </div>
-                <div class="col-12 col-sm-6">
-                  <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="timestamps" name="timestamps">
-                    <label class="form-check-label" for="timestamps">Include timestamps</label>
+                    <input
+                      class="form-check-input"
+                      type="checkbox"
+                      id="timestamps"
+                      name="timestamps"
+                    />
+                    <label class="form-check-label" for="timestamps"
+                      >Include timestamps</label
+                    >
                   </div>
                 </div>
               </div>
@@ -502,7 +519,9 @@
 
           <div class="feedback" id="form-feedback"></div>
 
-          <button type="submit" class="btn btn-primary btn-lg">Start transcription</button>
+          <button type="submit" class="btn btn-primary btn-lg">
+            Start transcription
+          </button>
         </form>
       </div>
 
@@ -519,10 +538,10 @@
         </div>
         <div class="status-board" id="status-board">
           <div class="status-row">
-            <div class="status-dot" id="status-dot" data-state="idle"></div>
             <div class="status-copy">
-              <span class="status-title" id="status-title">No job running</span>
-              <span class="status-desc" id="status-desc">Start by uploading an audio file above.</span>
+              <span class="status-desc" id="status-desc"
+                >Start by uploading an audio file above.</span
+              >
             </div>
           </div>
         </div>
@@ -531,11 +550,18 @@
       <div class="surface-card result-card" id="result-card">
         <div>
           <h3 class="mb-2">Transcript preview</h3>
-          <p class="muted mb-0">Review the generated text below, copy it, or download the full transcript.</p>
+          <p class="muted mb-0">
+            Review the generated text below, copy it, or download the full
+            transcript.
+          </p>
         </div>
         <div class="result-actions">
-          <button type="button" class="ghost-btn" id="copy-btn" disabled>Copy to clipboard</button>
-          <a class="ghost-btn" id="download-btn" href="#" download>Download .txt</a>
+          <button type="button" class="ghost-btn" id="copy-btn" disabled>
+            Copy to clipboard
+          </button>
+          <a class="ghost-btn" id="download-btn" href="#" download
+            >Download .txt</a
+          >
         </div>
         <pre id="result-text"></pre>
       </div>
@@ -544,49 +570,68 @@
     <div class="surface-card info-card">
       <h3 class="mb-3">How it works</h3>
       <ul>
-        <li><strong>Choose or drop a file:</strong> We securely upload it to the server running Whisper.</li>
-        <li><strong>Pick your engine:</strong> Use the OpenAI API for speed, or run locally with automatic GPU/MLX detection.</li>
-        <li><strong>Watch the progress:</strong> Real-time updates keep you informed while the job runs.</li>
-        <li><strong>Download or copy:</strong> Save the transcript or copy it directly from the preview.</li>
+        <li>
+          <strong>Choose or drop a file:</strong> We securely upload it to the
+          server running Whisper.
+        </li>
+        <li>
+          <strong>Pick your engine:</strong> Use the OpenAI API for speed, or
+          run locally with automatic GPU/MLX detection.
+        </li>
+        <li>
+          <strong>Watch the progress:</strong> Real-time updates keep you
+          informed while the job runs.
+        </li>
+        <li>
+          <strong>Download or copy:</strong> Save the transcript or copy it
+          directly from the preview.
+        </li>
       </ul>
 
       <h4 class="mt-4">Best results</h4>
-      <p class="muted">High-quality audio under 30 minutes processes fastest. For longer sessions consider enabling aggregation to group similar phrases.</p>
+      <p class="muted">
+        High-quality audio under 30 minutes processes fastest. For longer
+        sessions consider enabling aggregation to group similar phrases.
+      </p>
 
       <h4 class="mt-4">Need a nudge?</h4>
-      <p class="muted mb-3">You can repeat a run with different settings using the same file to compare output quality.</p>
+      <p class="muted mb-3">
+        You can repeat a run with different settings using the same file to
+        compare output quality.
+      </p>
       <span class="info-badge">Tip</span>
-      <span class="muted ms-2">Speaker detection works best with clear separations between voices.</span>
+      <span class="muted ms-2"
+        >Speaker detection works best with clear separations between
+        voices.</span
+      >
     </div>
   </div>
 </section>
-{% endblock %}
-
-{% block scripts %}
+{% endblock %} {% block scripts %}
 <script>
-  const modeInput = document.getElementById('mode');
-  const modeChips = document.querySelectorAll('#mode-chips .chip');
-  const modelWrapper = document.getElementById('model-wrapper');
-  const modelPicker = document.getElementById('model-picker');
-  const modelToggle = document.getElementById('model-toggle');
-  const modelLabel = document.getElementById('model-label');
-  const modelMenu = document.getElementById('model-menu');
-  const modelInput = document.getElementById('local-model-value');
-  const dropzone = document.getElementById('dropzone');
-  const fileInput = document.getElementById('audio');
-  const fileNameEl = document.getElementById('file-name');
-  const form = document.getElementById('upload-form');
-  const feedback = document.getElementById('form-feedback');
-  const progressBar = document.getElementById('progress-bar');
-  const progressStage = document.getElementById('progress-stage');
-  const progressPercent = document.getElementById('progress-percent');
-  const statusDot = document.getElementById('status-dot');
-  const statusTitle = document.getElementById('status-title');
-  const statusDesc = document.getElementById('status-desc');
-  const resultCard = document.getElementById('result-card');
-  const resultText = document.getElementById('result-text');
-  const copyBtn = document.getElementById('copy-btn');
-  const downloadBtn = document.getElementById('download-btn');
+  const modeInput = document.getElementById("mode");
+  const modeChips = document.querySelectorAll("#mode-chips .chip");
+  const modelWrapper = document.getElementById("model-wrapper");
+  const modelPicker = document.getElementById("model-picker");
+  const modelToggle = document.getElementById("model-toggle");
+  const modelLabel = document.getElementById("model-label");
+  const modelMenu = document.getElementById("model-menu");
+  const modelInput = document.getElementById("local-model-value");
+  const dropzone = document.getElementById("dropzone");
+  const fileInput = document.getElementById("audio");
+  const fileNameEl = document.getElementById("file-name");
+  const form = document.getElementById("upload-form");
+  const feedback = document.getElementById("form-feedback");
+  const progressBar = document.getElementById("progress-bar");
+  const progressStage = document.getElementById("progress-stage");
+  const progressPercent = document.getElementById("progress-percent");
+  const statusTitle = document.getElementById("status-title");
+  const statusDesc = document.getElementById("status-desc");
+  const statusBoard = document.getElementById("status-board");
+  const resultCard = document.getElementById("result-card");
+  const resultText = document.getElementById("result-text");
+  const copyBtn = document.getElementById("copy-btn");
+  const downloadBtn = document.getElementById("download-btn");
 
   let pollHandle = null;
   let currentJob = null;
@@ -596,38 +641,45 @@
   function selectMode(value) {
     modeInput.value = value;
     modeChips.forEach((chip) => {
-      chip.classList.toggle('active', chip.dataset.mode === value);
+      chip.classList.toggle("active", chip.dataset.mode === value);
     });
-    const showModel = value === 'local';
-    modelWrapper.classList.toggle('active', showModel);
+    const showModel = value === "local";
+    modelWrapper.classList.toggle("active", showModel);
   }
 
   modeChips.forEach((chip) => {
-    chip.addEventListener('click', () => selectMode(chip.dataset.mode));
+    chip.addEventListener("click", () => selectMode(chip.dataset.mode));
   });
 
-  selectMode(modeInput.value || 'api');
+  selectMode(modeInput.value || "api");
 
   function setProgress(value, stageText, description) {
     const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
     progressBar.dataset.progress = String(pct);
     progressBar.style.transform = `scaleX(${Math.max(0.02, pct / 100)})`;
-    progressStage.textContent = stageText || 'Processing…';
+    progressStage.textContent = stageText || "Processing…";
     progressPercent.textContent = `${pct}%`;
-    statusTitle.textContent = stageText || 'Processing…';
-    statusDesc.textContent = description || '';
-    if (pct >= 100) {
-      statusDot.dataset.state = 'done';
-    } else if (pct > 0) {
-      statusDot.dataset.state = 'active';
+    // While a job is actively running hide the small static status box to avoid
+    // repeating messages (e.g. "No job running / Running Whisper on your audio").
+    // Only show the status-board when idle or the job completes.
+    if (pct > 0 && pct < 100) {
+      if (statusBoard) statusBoard.style.display = "none";
     } else {
-      statusDot.dataset.state = 'idle';
+      if (statusBoard) statusBoard.style.display = "";
     }
+    // Only the progress area should show live progress text; keep the small
+    // status-title unchanged to preserve the idle hint when no job is running.
+    statusDesc.textContent = pct >= 100 ? description || "" : "";
+    // visual state handled by the progress bar; removed the small status dot.
   }
 
   function resetProgress() {
-    setProgress(0, 'Waiting for a file…', 'Start by uploading an audio file above.');
-    statusDot.dataset.state = 'idle';
+    setProgress(
+      0,
+      "Waiting for a file…",
+      "Start by uploading an audio file above."
+    );
+    // status dot removed
   }
 
   function resetSession() {
@@ -638,39 +690,39 @@
     currentJob = null;
     downloadUrl = null;
     resetProgress();
-    resultCard.classList.remove('active');
-    resultText.textContent = '';
-    downloadBtn.href = '#';
+    resultCard.classList.remove("active");
+    resultText.textContent = "";
+    downloadBtn.href = "#";
     copyBtn.disabled = true;
-    copyBtn.textContent = 'Copy to clipboard';
+    copyBtn.textContent = "Copy to clipboard";
   }
 
   function showFeedback(message) {
     feedback.textContent = message;
-    feedback.classList.add('visible');
+    feedback.classList.add("visible");
   }
 
   function clearFeedback() {
-    feedback.textContent = '';
-    feedback.classList.remove('visible');
+    feedback.textContent = "";
+    feedback.classList.remove("visible");
   }
 
   resetSession();
 
-  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener("click", () => fileInput.click());
 
-  dropzone.addEventListener('dragover', (event) => {
+  dropzone.addEventListener("dragover", (event) => {
     event.preventDefault();
-    dropzone.classList.add('dragging');
+    dropzone.classList.add("dragging");
   });
 
-  dropzone.addEventListener('dragleave', () => {
-    dropzone.classList.remove('dragging');
+  dropzone.addEventListener("dragleave", () => {
+    dropzone.classList.remove("dragging");
   });
 
-  dropzone.addEventListener('drop', (event) => {
+  dropzone.addEventListener("drop", (event) => {
     event.preventDefault();
-    dropzone.classList.remove('dragging');
+    dropzone.classList.remove("dragging");
     const files = event.dataTransfer.files;
     if (files && files.length) {
       fileInput.files = files;
@@ -678,38 +730,45 @@
     }
   });
 
-  fileInput.addEventListener('change', updateFileName);
+  fileInput.addEventListener("change", updateFileName);
 
   function updateFileName() {
     clearFeedback();
     if (fileInput.files.length) {
       const file = fileInput.files[0];
-      fileNameEl.textContent = `${file.name} · ${(file.size / (1024 * 1024)).toFixed(2)} MB`;
-      setProgress(0.01, 'Ready to start', 'Hit “Start transcription” when you are ready.');
+      fileNameEl.textContent = `${file.name} · ${(
+        file.size /
+        (1024 * 1024)
+      ).toFixed(2)} MB`;
+      setProgress(
+        0.01,
+        "Ready to start",
+        "Hit “Start transcription” when you are ready."
+      );
     } else {
-      fileNameEl.textContent = '';
+      fileNameEl.textContent = "";
       resetSession();
     }
   }
 
-  form.addEventListener('submit', async (event) => {
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
     clearFeedback();
 
     if (!fileInput.files.length) {
-      showFeedback('Please choose an audio or video file to continue.');
+      showFeedback("Please choose an audio or video file to continue.");
       return;
     }
 
     try {
-      setProgress(0.08, 'Uploading…', 'Transferring your audio securely.');
+      setProgress(0.08, "Uploading…", "Transferring your audio securely.");
 
       const formData = new FormData(form);
-      const response = await fetch('/start', {
-        method: 'POST',
+      const response = await fetch("/start", {
+        method: "POST",
         body: formData,
         headers: {
-          'Accept': 'application/json',
+          Accept: "application/json",
         },
       });
 
@@ -721,7 +780,11 @@
       currentJob = payload.job_id;
       downloadUrl = payload.download_url;
 
-      setProgress(payload.progress || 0.12, payload.stage || 'Processing…', 'Setting up Whisper for transcription.');
+      setProgress(
+        payload.progress || 0.12,
+        payload.stage || "Processing…",
+        "Setting up Whisper for transcription."
+      );
 
       if (pollHandle) {
         clearTimeout(pollHandle);
@@ -729,8 +792,14 @@
       pollLogs(payload.logs_url || `/logs/${currentJob}`);
     } catch (err) {
       console.error(err);
-      setProgress(0, 'Could not start transcription', 'Please try again or pick another file.');
-      showFeedback('Something went wrong while starting the job. Double-check the file and try again.');
+      setProgress(
+        0,
+        "Could not start transcription",
+        "Please try again or pick another file."
+      );
+      showFeedback(
+        "Something went wrong while starting the job. Double-check the file and try again."
+      );
     }
   });
 
@@ -742,7 +811,7 @@
     try {
       const response = await fetch(url, {
         headers: {
-          'Accept': 'application/json',
+          Accept: "application/json",
         },
       });
 
@@ -751,38 +820,39 @@
       }
 
       const data = await response.json();
-      const progressValue = typeof data.progress === 'number' ? data.progress : 0;
-      const stageText = data.stage || 'Processing…';
-      let descText = 'Working through your audio.';
-      if (stageText.includes('Queued')) {
-        descText = 'Your file is in the queue and will start in a moment.';
-      } else if (stageText.includes('Starting')) {
-        descText = 'Setting up Whisper and analysing the audio file.';
-      } else if (stageText.includes('Running on')) {
-        descText = stageText.includes('NVIDIA')
-          ? 'Leveraging your GPU for the fastest possible run.'
-          : stageText.includes('MLX')
-            ? 'Using Apple MLX acceleration to speed things up.'
-            : 'Processing locally on the CPU.';
-      } else if (stageText.includes('Converting')) {
-        descText = 'Optimising audio format for transcription.';
-      } else if (stageText.includes('Cleaning')) {
-        descText = 'Cleaning silence and preparing audio chunks.';
-      } else if (stageText.includes('Transcribing')) {
-        descText = 'Running Whisper on your audio.';
-      } else if (stageText.includes('Detecting')) {
-        descText = 'Locating speaker changes.';
-      } else if (stageText.includes('Transcript ready')) {
-        descText = 'All done! Review the transcript below.';
-      } else if (stageText.includes('failed')) {
-        descText = 'We hit a snag during processing.';
+      const progressValue =
+        typeof data.progress === "number" ? data.progress : 0;
+      const stageText = data.stage || "Processing…";
+      let descText = "Working through your audio.";
+      if (stageText.includes("Queued")) {
+        descText = "Your file is in the queue and will start in a moment.";
+      } else if (stageText.includes("Starting")) {
+        descText = "Setting up Whisper and analysing the audio file.";
+      } else if (stageText.includes("Running on")) {
+        descText = stageText.includes("NVIDIA")
+          ? "Leveraging your GPU for the fastest possible run."
+          : stageText.includes("MLX")
+          ? "Using Apple MLX acceleration to speed things up."
+          : "Processing locally on the CPU.";
+      } else if (stageText.includes("Converting")) {
+        descText = "Optimising audio format for transcription.";
+      } else if (stageText.includes("Cleaning")) {
+        descText = "Cleaning silence and preparing audio chunks.";
+      } else if (stageText.includes("Transcribing")) {
+        descText = "Running Whisper on your audio.";
+      } else if (stageText.includes("Detecting")) {
+        descText = "Locating speaker changes.";
+      } else if (stageText.includes("Transcript ready")) {
+        descText = "All done! Review the transcript below.";
+      } else if (stageText.includes("failed")) {
+        descText = "We hit a snag during processing.";
       }
 
       setProgress(progressValue, stageText, descText);
 
-      if (data.status === 'done') {
-        resultText.textContent = data.result || '';
-        resultCard.classList.add('active');
+      if (data.status === "done") {
+        resultText.textContent = data.result || "";
+        resultCard.classList.add("active");
         if (data.result) {
           copyBtn.disabled = false;
         }
@@ -795,50 +865,60 @@
         return;
       }
 
-      if (data.status === 'error') {
-        setProgress(1, 'Processing failed', 'We hit an error while transcribing. Check the details and try again.');
-        resultCard.classList.remove('active');
+      if (data.status === "error") {
+        setProgress(
+          1,
+          "Processing failed",
+          "We hit an error while transcribing. Check the details and try again."
+        );
+        resultCard.classList.remove("active");
         pollHandle = null;
-        showFeedback('An error occurred while processing the audio. See status details above.');
+        showFeedback(
+          "An error occurred while processing the audio. See status details above."
+        );
         return;
       }
 
       pollHandle = setTimeout(() => pollLogs(url), 1000);
     } catch (err) {
       console.error(err);
-      setProgress(progressBar.dataset.progress / 100, 'Connection hiccup…', 'Attempting to reconnect to the job.');
+      setProgress(
+        progressBar.dataset.progress / 100,
+        "Connection hiccup…",
+        "Attempting to reconnect to the job."
+      );
       pollHandle = setTimeout(() => pollLogs(url), 2000);
     }
   }
 
-  copyBtn.addEventListener('click', async () => {
+  copyBtn.addEventListener("click", async () => {
     if (!resultText.textContent) {
       return;
     }
     try {
       await navigator.clipboard.writeText(resultText.textContent);
-      copyBtn.textContent = 'Copied!';
+      copyBtn.textContent = "Copied!";
       setTimeout(() => {
-        copyBtn.textContent = 'Copy to clipboard';
+        copyBtn.textContent = "Copy to clipboard";
       }, 1600);
     } catch (err) {
-      console.error('Failed to copy', err);
-      copyBtn.textContent = 'Copy failed';
+      console.error("Failed to copy", err);
+      copyBtn.textContent = "Copy failed";
       setTimeout(() => {
-        copyBtn.textContent = 'Copy to clipboard';
+        copyBtn.textContent = "Copy to clipboard";
       }, 1600);
     }
   });
 
   function toggleMenu(forceState) {
-    menuOpen = typeof forceState === 'boolean' ? forceState : !menuOpen;
-    modelPicker.classList.toggle('open', menuOpen);
+    menuOpen = typeof forceState === "boolean" ? forceState : !menuOpen;
+    modelPicker.classList.toggle("open", menuOpen);
   }
 
-  modelToggle.addEventListener('click', () => toggleMenu());
+  modelToggle.addEventListener("click", () => toggleMenu());
 
-  modelMenu.querySelectorAll('.model-option').forEach((option) => {
-    option.addEventListener('click', () => {
+  modelMenu.querySelectorAll(".model-option").forEach((option) => {
+    option.addEventListener("click", () => {
       const value = option.dataset.value;
       const label = option.dataset.label;
       modelInput.value = value;
@@ -847,14 +927,14 @@
     });
   });
 
-  document.addEventListener('click', (event) => {
+  document.addEventListener("click", (event) => {
     if (!modelPicker.contains(event.target)) {
       toggleMenu(false);
     }
   });
 
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
       toggleMenu(false);
     }
   });

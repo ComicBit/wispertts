@@ -1,40 +1,81 @@
-{% extends 'base.html' %}
-
-{% block styles %}
+{% extends 'base.html' %} {% block styles %}
 <style>
   .status-layout {
     display: grid;
     gap: 24px;
   }
 
-  .stepper {
+  .progress-timeline {
     display: flex;
+    flex-direction: column;
     gap: 12px;
+    margin-top: 12px;
   }
 
-  .step {
-    flex: 1;
-    position: relative;
+  .timeline-step {
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    gap: 12px;
     padding: 14px 16px;
     border-radius: 14px;
     background: white;
-    border: 1px solid rgba(15, 23, 42, 0.06);
-    text-align: center;
-    font-weight: 600;
-    color: var(--muted);
-    transition: all 0.2s ease;
+    border: 1px solid rgba(15, 23, 42, 0.07);
+    transition: border-color 0.2s ease, background 0.2s ease;
   }
 
-  .step.active {
-    background: rgba(91, 75, 255, 0.12);
-    border-color: rgba(91, 75, 255, 0.24);
-    color: var(--brand);
+  .timeline-step[data-status="active"] {
+    background: rgba(91, 75, 255, 0.1);
+    border-color: rgba(91, 75, 255, 0.3);
   }
 
-  .step.completed {
+  .timeline-step[data-status="completed"] {
     background: rgba(34, 197, 94, 0.12);
     border-color: rgba(34, 197, 94, 0.24);
-    color: #15803d;
+  }
+
+  .timeline-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: white;
+    background: rgba(148, 163, 184, 0.5);
+  }
+
+  .timeline-step[data-status="active"] .timeline-icon {
+    background: var(--brand);
+  }
+
+  .timeline-step[data-status="completed"] .timeline-icon {
+    background: #22c55e;
+  }
+
+  .timeline-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .timeline-title {
+    font-weight: 600;
+    color: #0f172a;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .timeline-progress {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  .timeline-desc {
+    color: var(--muted);
+    font-size: 0.9rem;
   }
 
   .progress-shell {
@@ -56,7 +97,7 @@
   .progress-bar {
     position: absolute;
     inset: 0;
-    width: 12%;
+    width: 100%;
     border-radius: 999px;
     background: linear-gradient(90deg, var(--brand), #a855f7);
     transform-origin: left center;
@@ -148,21 +189,18 @@
     gap: 12px;
   }
 </style>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 <section class="surface-card status-layout">
   <div>
     <h2 class="mb-3">Your job is running</h2>
-    <p class="muted mb-0">Keep this page open to watch progress. You can safely head back once it finishes.</p>
+    <p class="muted mb-0">
+      Keep this page open to watch progress. You can safely head back once it
+      finishes.
+    </p>
   </div>
 
   <div>
-    <div class="stepper" id="stepper">
-      <div class="step" data-step="upload">Upload</div>
-      <div class="step" data-step="processing">Processing</div>
-      <div class="step" data-step="complete">Complete</div>
-    </div>
+    <div class="progress-timeline" id="progress-timeline"></div>
 
     <div class="status-badge" id="status-badge">
       <span class="status-text">Getting things ready…</span>
@@ -176,13 +214,19 @@
         <span id="progress-stage">Connecting…</span>
         <span id="progress-percent">0%</span>
       </div>
-      <p class="status-desc" id="status-intro">We are preparing Whisper for your audio.</p>
+      <p class="status-desc" id="status-intro">
+        We are preparing Whisper for your audio.
+      </p>
     </div>
 
     <div class="result-block" id="result-block">
       <div class="actions">
-        <a id="download" class="ghost-btn" href="#" download>Download transcript</a>
-        <button type="button" class="ghost-btn" id="copy">Copy to clipboard</button>
+        <a id="download" class="ghost-btn" href="#" download
+          >Download transcript</a
+        >
+        <button type="button" class="ghost-btn" id="copy">
+          Copy to clipboard
+        </button>
       </div>
       <pre id="result"></pre>
     </div>
@@ -192,9 +236,7 @@
     <a href="/" class="ghost-btn">← Start another transcription</a>
   </div>
 </section>
-{% endblock %}
-
-{% block scripts %}
+{% endblock %} {% block scripts %}
 <script>
   const jobId = "{{ job_id }}";
   const progressBar = document.getElementById('progress-bar');
@@ -207,25 +249,22 @@
   const copyEl = document.getElementById('copy');
   const statusBadge = document.getElementById('status-badge');
   const statusText = statusBadge.querySelector('.status-text');
-  const steps = {
-    upload: document.querySelector('.step[data-step="upload"]'),
-    processing: document.querySelector('.step[data-step="processing"]'),
-    complete: document.querySelector('.step[data-step="complete"]'),
+  const progressTimeline = document.getElementById('progress-timeline');
+  const stageDescriptions = {
+    prepare: 'Preparing Whisper and validating settings.',
+    load_model: 'Loading the transcription model.',
+    convert: 'Optimising audio format for transcription.',
+    silence: 'Cleaning silence and trimming pauses.',
+    chunk: 'Splitting audio into manageable chunks.',
+    diarize: 'Detecting speakers and conversation turns.',
+    transcribe: 'Running Whisper to extract text from each chunk.',
+    finalize: 'Compiling the final transcript output.',
   };
-
-  function setStep(step) {
-    Object.entries(steps).forEach(([key, el]) => {
-      el.classList.remove('active', 'completed');
-      if (key === step) {
-        el.classList.add('active');
-      } else if (
-        (step === 'processing' && key === 'upload') ||
-        (step === 'complete' && (key === 'upload' || key === 'processing'))
-      ) {
-        el.classList.add('completed');
-      }
-    });
-  }
+  const initialMeta = {{ (initial_meta or {}) | tojson }};
+  const initialStageText = {{ (initial_stage or 'Processing…') | tojson }};
+  const initialDescription = {{ (initial_description or '') | tojson }};
+  const initialProgress = {{ (initial_progress or 0) | tojson }};
+  const initialStatus = {{ (job_status or 'running') | tojson }};
 
   function setBadge(message, variant = 'neutral') {
     statusBadge.classList.remove('processing', 'success', 'error');
@@ -239,12 +278,101 @@
     statusText.textContent = message;
   }
 
-  function setProgress(value, stageText, description) {
+  function formatStageMetric(item) {
+    if (!item) {
+      return '';
+    }
+    if (item.status === 'completed') {
+      return 'Done';
+    }
+    const extra = item.extra || {};
+    if (typeof extra.units_total === 'number' && extra.units_total > 0) {
+      const done = typeof extra.units_done === 'number' ? extra.units_done : Math.round((item.progress || 0) * extra.units_total);
+      return `${done}/${extra.units_total}`;
+    }
+    if (typeof extra.chunks_total === 'number' && extra.chunks_total > 0) {
+      const done = typeof extra.chunks_done === 'number' ? extra.chunks_done : Math.round((item.progress || 0) * extra.chunks_total);
+      return `${done}/${extra.chunks_total}`;
+    }
+    if (typeof item.progress === 'number' && !Number.isNaN(item.progress)) {
+      return `${Math.round(item.progress * 100)}%`;
+    }
+    return '';
+  }
+
+  function renderTimeline(timeline) {
+    if (!progressTimeline) {
+      return;
+    }
+    if (!Array.isArray(timeline) || timeline.length === 0) {
+      progressTimeline.innerHTML = '';
+      return;
+    }
+    progressTimeline.innerHTML = '';
+    timeline.forEach((item, index) => {
+      const container = document.createElement('div');
+      container.className = 'timeline-step';
+      container.dataset.status = item.status || 'upcoming';
+
+      const icon = document.createElement('div');
+      icon.className = 'timeline-icon';
+      icon.textContent = item.status === 'completed' ? '✓' : String(index + 1);
+
+      const content = document.createElement('div');
+      content.className = 'timeline-content';
+
+      const title = document.createElement('div');
+      title.className = 'timeline-title';
+      const label = document.createElement('span');
+      label.textContent = item.label || 'Processing';
+      title.appendChild(label);
+
+      const metricValue = formatStageMetric(item);
+      if (metricValue) {
+        const metric = document.createElement('span');
+        metric.className = 'timeline-progress';
+        metric.textContent = metricValue;
+        title.appendChild(metric);
+      }
+
+      content.appendChild(title);
+
+      const description = item.description || '';
+      if (description) {
+        const desc = document.createElement('div');
+        desc.className = 'timeline-desc';
+        desc.textContent = description;
+        content.appendChild(desc);
+      }
+
+      container.appendChild(icon);
+      container.appendChild(content);
+      progressTimeline.appendChild(container);
+    });
+  }
+
+  function setProgress(value, stageText, description, stageProgress) {
     const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
     progressBar.style.transform = `scaleX(${Math.max(0.02, pct / 100)})`;
-    progressStage.textContent = stageText || 'Processing…';
+    if (typeof stageProgress === 'number') {
+      const stagePct = Math.round(stageProgress * 100);
+      progressStage.textContent = stagePct ? `${stageText || 'Processing…'} (${stagePct}%)` : (stageText || 'Processing…');
+    } else {
+      progressStage.textContent = stageText || 'Processing…';
+    }
     progressPercent.textContent = `${pct}%`;
     progressIntro.textContent = description || '';
+  }
+
+  function applyProgressData(data) {
+    const progressValue = typeof data.progress === 'number' ? data.progress : 0;
+    const stageText = data.stage || 'Processing…';
+    const stageKey = typeof data.stageKey === 'string' ? data.stageKey : null;
+    const description = data.description || (stageKey ? stageDescriptions[stageKey] : '') || 'Working through your audio.';
+    const stageProgress = typeof data.stageProgress === 'number' ? data.stageProgress : null;
+
+    setProgress(progressValue, stageText, description, stageProgress);
+    renderTimeline(Array.isArray(data.timeline) ? data.timeline : []);
   }
 
   async function poll() {
@@ -258,37 +386,10 @@
         throw new Error(`HTTP ${response.status}`);
       }
       const data = await response.json();
-      const progressValue = typeof data.progress === 'number' ? data.progress : 0;
       const stageText = data.stage || 'Processing…';
-      let description = 'Working through your audio.';
-      if (stageText.includes('Queued')) {
-        description = 'Your file is queued and will start shortly.';
-      } else if (stageText.includes('Starting')) {
-        description = 'Setting up Whisper and preparing your audio.';
-      } else if (stageText.includes('Running on')) {
-        description = stageText.includes('NVIDIA')
-          ? 'Using your NVIDIA GPU for peak speed.'
-          : stageText.includes('MLX')
-            ? 'Taking advantage of the Apple MLX backend.'
-            : 'Processing locally on the CPU.';
-      } else if (stageText.includes('Converting')) {
-        description = 'Optimising audio format for transcription.';
-      } else if (stageText.includes('Cleaning')) {
-        description = 'Cleaning silence and preparing audio chunks.';
-      } else if (stageText.includes('Transcribing')) {
-        description = 'Running Whisper on your audio.';
-      } else if (stageText.includes('Detecting')) {
-        description = 'Locating speaker changes.';
-      } else if (stageText.includes('Transcript ready')) {
-        description = 'All done! Download the transcript below.';
-      } else if (stageText.includes('failed')) {
-        description = 'We hit a snag while processing.';
-      }
-
-      setProgress(progressValue, stageText, description);
+      applyProgressData(data);
 
       if (data.status === 'done') {
-        setStep('complete');
         setBadge('Transcript ready!', 'success');
         resultBlock.classList.add('active');
         resultEl.textContent = data.result || '';
@@ -305,8 +406,7 @@
         return;
       }
 
-      setStep('processing');
-      setBadge('Processing with Whisper…', 'processing');
+      setBadge(stageText || 'Processing with Whisper…', 'processing');
       setTimeout(poll, 1000);
     } catch (err) {
       console.error(err);
@@ -331,9 +431,22 @@
     }
   });
 
-  setStep('processing');
-  setBadge('Processing with Whisper…', 'processing');
-  setProgress(0.1, 'Starting transcription…', 'Preparing Whisper to process your audio.');
+  const initialStageProgress = initialMeta && typeof initialMeta.stage_progress === 'number' ? initialMeta.stage_progress : null;
+  if (initialMeta && Array.isArray(initialMeta.timeline)) {
+    renderTimeline(initialMeta.timeline);
+  }
+  const resolvedInitialDescription = initialDescription || (initialMeta && typeof initialMeta.stage_key === 'string' ? stageDescriptions[initialMeta.stage_key] : '') || 'Preparing Whisper and validating settings.';
+  const resolvedInitialProgress = typeof initialProgress === 'number' ? initialProgress : 0;
+
+  setProgress(resolvedInitialProgress, initialStageText, resolvedInitialDescription, initialStageProgress);
+
+  if (initialStatus === 'done') {
+    setBadge('Transcript ready!', 'success');
+  } else if (initialStatus === 'error') {
+    setBadge('Something went wrong during processing.', 'error');
+  } else {
+    setBadge(initialStageText || 'Processing with Whisper…', 'processing');
+  }
   poll();
 </script>
 {% endblock %}

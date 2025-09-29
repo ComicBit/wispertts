@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import threading
 import traceback
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from flask import (
     Flask,
@@ -40,6 +41,10 @@ class Job:
     error: Optional[str] = None
     progress: float = 0.0
     stage: str = "Queued for processing"
+    stage_detail: str = "Preparing Whisper"
+    progress_meta: Dict[str, Any] = field(default_factory=dict)
+    tracker: Optional[JobProgressTracker] = None
+    options: Dict[str, Any] = field(default_factory=dict)
 
 
 jobs: Dict[str, Job] = {}
@@ -57,18 +62,180 @@ _ensure_dir(UPLOAD_DIR)
 _ensure_dir(OUT_DIR)
 
 
-PROGRESS_HINTS: List[Tuple[str, float, str]] = [
-    ("[STEP] Loading", 0.15, "Preparing transcription pipeline"),
-    ("[STEP] Converting", 0.25, "Converting audio"),
-    ("[STEP] Removing silence", 0.35, "Cleaning silence"),
-    ("[STEP] Chunking", 0.45, "Splitting audio into chunks"),
-    ("[STEP] Diarization", 0.6, "Detecting speakers"),
-    ("[STEP] Transcribing segments", 0.75, "Transcribing segments"),
-    ("[STEP] Transcribing", 0.7, "Transcribing audio"),
-    ("[SUCCESS]", 1.0, "Transcript ready"),
-]
+@dataclass
+class StageState:
+    key: str
+    label: str
+    weight: float
+    progress: float = 0.0
+    extra: Dict[str, Any] = field(default_factory=dict)
 
 
+class JobProgressTracker:
+    def __init__(self, *, diarize: bool, mode: Optional[str]):
+        blueprint: List[Tuple[str, str, float]] = [
+            ("prepare", "Preparing transcription job", 0.04),
+            ("load_model", "Loading transcription model", 0.08),
+            ("convert", "Converting audio", 0.08),
+            ("silence", "Removing silence", 0.08),
+            ("chunk", "Splitting audio into chunks", 0.07),
+            ("diarize", "Running diarization", 0.15),
+            ("transcribe", "Transcribing audio", 0.45),
+            ("finalize", "Finalizing transcript", 0.05),
+        ]
+
+        mode_key = (mode or "").lower()
+        stages: List[StageState] = []
+        for key, label, weight in blueprint:
+            if key == "load_model" and mode_key == "api":
+                continue
+            if key == "chunk" and diarize:
+                continue
+            if key == "diarize" and not diarize:
+                continue
+            stages.append(StageState(key=key, label=label, weight=weight))
+
+        if not stages:
+            stages.append(StageState(key="prepare", label="Preparing transcription job", weight=1.0))
+
+        total_weight = sum(stage.weight for stage in stages) or 1.0
+        for stage in stages:
+            stage.weight = stage.weight / total_weight
+
+        self.stages = stages
+        self.stage_map = {stage.key: stage for stage in stages}
+        self.aliases = {"transcribe_segments": "transcribe"}
+        self._detail_overrides: Dict[str, str] = {}
+
+    def update_from_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        raw = payload.get("stage")
+        if not isinstance(raw, str):
+            return None
+        key = self.aliases.get(raw, raw)
+        stage = self.stage_map.get(key)
+        if stage is None:
+            return None
+
+        total = payload.get("total")
+        try:
+            total_val = float(total)
+        except (TypeError, ValueError):
+            total_val = 1.0
+        if total_val <= 0:
+            total_val = 1.0
+
+        current = payload.get("current")
+        try:
+            current_val = float(current)
+        except (TypeError, ValueError):
+            current_val = 0.0
+        current_val = max(0.0, min(current_val, total_val))
+
+        progress = current_val / total_val
+        if progress > stage.progress:
+            stage.progress = min(progress, 1.0)
+
+        label = payload.get("label")
+        if isinstance(label, str) and label.strip():
+            stage.label = label.strip()
+
+        extra = payload.get("extra")
+        if isinstance(extra, dict):
+            stage.extra = extra
+
+        detail = payload.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            self._detail_overrides[key] = detail.strip()
+
+        return self.snapshot(active_key=stage.key)
+
+    def snapshot(self, active_key: Optional[str] = None) -> Dict[str, Any]:
+        active_stage: Optional[StageState] = None
+        for stage in self.stages:
+            if stage.progress < 0.999:
+                active_stage = stage
+                break
+        if active_stage is None:
+            active_stage = self.stages[-1]
+
+        if active_key:
+            candidate = self.stage_map.get(active_key)
+            if candidate is not None and (candidate.progress < 0.999 or active_stage.progress >= 0.999):
+                active_stage = candidate
+
+        overall = sum(stage.progress * stage.weight for stage in self.stages)
+        overall = max(0.0, min(overall, 1.0))
+
+        detail = self._detail_overrides.get(active_stage.key) or self.describe(active_stage)
+
+        timeline: List[Dict[str, Any]] = []
+        for stage in self.stages:
+            if stage.progress >= 0.999:
+                status = "completed"
+            elif stage.key == active_stage.key:
+                status = "active"
+            else:
+                status = "upcoming"
+            timeline.append(
+                {
+                    "key": stage.key,
+                    "label": stage.label,
+                    "progress": stage.progress,
+                    "status": status,
+                    "extra": stage.extra,
+                    "description": self._detail_overrides.get(stage.key) or self.describe(stage),
+                }
+            )
+
+        return {
+            "overall": overall,
+            "stage_key": active_stage.key,
+            "stage_label": active_stage.label,
+            "stage_progress": active_stage.progress,
+            "description": detail,
+            "timeline": timeline,
+        }
+
+    def describe(self, stage: StageState) -> str:
+        extra = stage.extra or {}
+        if stage.key == "prepare":
+            return "Preparing Whisper and validating settings."
+        if stage.key == "load_model":
+            backend = extra.get("backend")
+            if backend == "mlx":
+                return "Loading the MLX Whisper weights into memory."
+            if backend == "local":
+                device = extra.get("device", "device")
+                return f"Loading a local Whisper model on {device}."
+            if backend == "api":
+                return "Connecting to the Whisper API."
+            return "Preparing transcription model."
+        if stage.key == "convert":
+            return "Optimizing audio format for consistent decoding."
+        if stage.key == "silence":
+            return "Detecting and trimming silence to improve throughput."
+        if stage.key == "chunk":
+            done = extra.get("chunks_done")
+            total = extra.get("chunks_total")
+            if done is not None and total:
+                return f"Splitting audio into {total} chunks ({done} ready)."
+            return "Splitting audio into manageable chunks."
+        if stage.key == "diarize":
+            jobs = extra.get("jobs")
+            if jobs:
+                return f"Detecting speakers and preparing {jobs} segments."
+            return "Detecting speaker changes in the audio."
+        if stage.key == "transcribe":
+            done = extra.get("units_done")
+            total = extra.get("units_total")
+            if done is not None and total:
+                return f"Transcribing speech ({done}/{total} segments complete)."
+            return "Running Whisper to extract the transcript."
+        if stage.key == "finalize":
+            if stage.progress >= 0.999:
+                return "All done! Download the transcript below."
+            return "Compiling text output and wrapping up."
+        return stage.label
 MODEL_LIBRARY: List[Tuple[str, str]] = [
     ("large-v3", "Large v3 • Best quality"),
     ("medium", "Medium • Balanced"),
@@ -143,14 +310,33 @@ def _run_job(job: Job, *, mode: str, local_model: str, language: Optional[str],
             job.stage = label
 
     def web_log(msg: str):
-        try:
-            job.log += (msg + "\n")
-        except Exception:
-            pass
-        for marker, pct, label in PROGRESS_HINTS:
-            if marker in msg:
-                set_progress(pct, label)
-                break
+        handled = False
+        if msg.startswith("[PROGRESS]"):
+            try:
+                payload = json.loads(msg.split(" ", 1)[1])
+            except Exception:
+                payload = None
+            if payload:
+                tracker = job.tracker
+                if tracker is None:
+                    tracker = JobProgressTracker(
+                        diarize=bool(job.options.get("diarize")),
+                        mode=job.options.get("mode"),
+                    )
+                    job.tracker = tracker
+                snapshot = tracker.update_from_payload(payload)
+                if snapshot:
+                    job.progress_meta = snapshot
+                    job.stage_detail = snapshot.get("description", job.stage_detail)
+                    set_progress(snapshot.get("overall", job.progress), snapshot.get("stage_label"))
+                handled = True
+        if not handled:
+            try:
+                job.log += (msg + "\n")
+            except Exception:
+                pass
+            if msg.startswith("[SUCCESS]"):
+                set_progress(1.0, "Transcript ready")
         # Also forward to console for debugging
         try:
             orig_log(msg)
@@ -262,7 +448,8 @@ def start():
     except Exception:
         mlx_batch_size = 12
     diarize = bool(request.form.get("diarize"))
-    aggregate = bool(request.form.get("aggregate"))
+    # Aggregation is always enabled in the web UI
+    aggregate = True
     timestamps = bool(request.form.get("timestamps"))
 
     jid = uuid.uuid4().hex[:12]
@@ -270,7 +457,24 @@ def start():
     out_path = os.path.join(OUT_DIR, f"{jid}.txt")
     f.save(in_path)
 
-    job = Job(id=jid, infile=in_path, outfile=out_path, progress=0.05, stage="Queued for processing")
+    job = Job(id=jid, infile=in_path, outfile=out_path)
+    job.options.update(
+        {
+            "mode": mode,
+            "language": language,
+            "local_model": local_model,
+            "mlx_batch_size": mlx_batch_size,
+            "mlx_quant": mlx_quant,
+            "diarize": diarize,
+            "aggregate": aggregate,
+            "timestamps": timestamps,
+        }
+    )
+    job.tracker = JobProgressTracker(diarize=diarize, mode=mode)
+    job.progress_meta = job.tracker.snapshot()
+    job.stage = job.progress_meta.get("stage_label", job.stage)
+    job.stage_detail = job.progress_meta.get("description", job.stage_detail)
+    job.progress = job.progress_meta.get("overall", job.progress)
     with jobs_lock:
         jobs[jid] = job
 
@@ -317,7 +521,15 @@ def status(job_id: str):
         job = jobs.get(job_id)
     if not job:
         return ("Not found", 404)
-    return render_template("status.html", job_id=job_id)
+    return render_template(
+        "status.html",
+        job_id=job_id,
+        initial_meta=job.progress_meta,
+        initial_stage=job.stage,
+        initial_description=job.stage_detail,
+        initial_progress=job.progress,
+        job_status=job.status,
+    )
 
 
 @app.get("/logs/<job_id>")
@@ -331,6 +543,10 @@ def logs(job_id: str):
         "log": job.log,
         "progress": job.progress,
         "stage": job.stage,
+        "description": job.stage_detail,
+        "stageKey": job.progress_meta.get("stage_key"),
+        "stageProgress": job.progress_meta.get("stage_progress"),
+        "timeline": job.progress_meta.get("timeline", []),
     }
     if job.status == "done":
         payload["result"] = job.result or ""
