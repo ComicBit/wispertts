@@ -1,2 +1,10 @@
 
 models/
+
+__pycache__/
+
+mlx_models/
+
+web_runs/
+
+*.m4a
