@@ -203,6 +203,37 @@ python webapp.py
 
 Open http://localhost:5001 in your browser. Upload an audio file, choose options and start the transcription. The web UI runs transcriptions in background threads and exposes a status page and download link when complete.
 
+### Realtime microphone streaming (beta)
+
+A separate FastAPI service provides low-latency microphone capture with realtime partial transcripts and a final high-accuracy pass. The web UI’s “Live Record” tab connects to this service over WebSockets.
+
+1. Install the extra dependencies (already listed in `requirements.txt`):
+
+       ```bash
+       pip install -r requirements.txt
+       ```
+
+2. Download a Vosk streaming model (for interim partials) and point `VOSK_MODEL_DIR` to it, or place it under `models/vosk`. For example:
+
+       ```bash
+       mkdir -p models/vosk
+       curl -L https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip -o vosk.zip
+       unzip vosk.zip -d models/
+       mv models/vosk-model-small-en-us-0.15 models/vosk
+       ```
+
+3. Run the streaming server:
+
+       ```bash
+       bash scripts/run_streaming.sh
+       ```
+
+       By default it listens on `0.0.0.0:8001`. The web UI automatically points to `ws://<current-host>:8001/ws/stream`, so when both services run on the same machine it will just work after you reload the page. You can override the target with `STREAMING_WS_URL`, or fine-tune it through `STREAMING_HOST`, `STREAMING_PORT`, and `STREAMING_PATH` if you proxy the service behind another origin.
+
+4. Start the Flask web UI (`python webapp.py`) and open the site. Switch to the “Live Record” tab, grant microphone permissions, and watch realtime text appear with minimal delay while the final transcription (with diarization) is queued automatically.
+
+The realtime service streams 16 kHz PCM frames to the server, pushes Vosk partials back to the browser, and, when recording stops, schedules a full Whisper run using the same backend settings as the upload flow.
+
 ## Helper installer / launcher
 
 A convenience script is included at `scripts/run.sh`. It will:

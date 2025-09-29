@@ -720,7 +720,20 @@ def to_lines(rows, show):
 
 
 # ------------------------------ ORCHESTRATE ---------------------------------
-def run(infile, outfile, *, mode, local_tag, mlx_batch_size, mlx_quant, diarize, lang, show_ts, agg):
+def run(
+    infile,
+    outfile,
+    *,
+    mode,
+    local_tag,
+    mlx_batch_size,
+    mlx_quant,
+    diarize,
+    lang,
+    show_ts,
+    agg,
+    trim_silence=True,
+):
     cli = mdl = None
     _emit_progress("prepare", 0, 1, label="Preparing transcription job")
     if mode == "api":
@@ -750,7 +763,10 @@ def run(infile, outfile, *, mode, local_tag, mlx_batch_size, mlx_quant, diarize,
 
     _emit_progress("prepare", 1, 1, label="Transcription pipeline ready")
     mp3 = convert(infile)
-    cleaned = remove_silence(mp3)
+    if trim_silence:
+        cleaned = remove_silence(mp3)
+    else:
+        cleaned = AudioSegment.from_file(mp3)
     if mp3 != infile:
         os.unlink(mp3)
     rows = (
@@ -786,6 +802,11 @@ def main():
     ap.add_argument("--language", default=None, metavar="ISO")
     ap.add_argument("--timestamps", action="store_true")
     ap.add_argument("--aggregate", action="store_true")
+    ap.add_argument(
+        "--skip-silence",
+        action="store_true",
+        help="Disable silence removal pre-processing",
+    )
     args = ap.parse_args()
     
     # Set default mode based on platform if not specified
@@ -811,6 +832,7 @@ def main():
         lang=args.language,
         show_ts=args.timestamps,
         agg=args.aggregate,
+        trim_silence=not getattr(args, "skip_silence", False),
     )
 
 
