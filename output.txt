@@ -1,0 +1,285 @@
+[Speaker 1] Obrigado, Pedro.
+[Speaker 1] recuperare le promozioni.
+[Speaker 1] Okay.
+[Speaker 1] Qui esiste un componente che gestisce il schema Active Promotion, almeno in javascript si chiama così.
+[Speaker 1] è questo qua
+[Speaker 1] questo Active Promotion gestisce in realtà sia
+[Speaker 1] le promozioni che le promozioni attivate
+[Speaker 1] Okay.
+[Speaker 1] Nel momento in cui tu vedi una promozione e schiacci il tasto,
+[Speaker 1] Questa non è una buona presenza, vediamo se ce n'è un po'.
+[Speaker 1] Okay.
+[Speaker 1] Nel momento in cui Schiacci attiva la promozione...
+[Speaker 1] Poi in linea di massima, se tutto va bene, dovrebbe...
+[Speaker 1] potresti vedere la promozione poi all'interno di promozioni attivate.
+[Speaker 1] Okay.
+[Speaker 1] Uh,
+[Speaker 1] Queste due robe sono due chiamate differenti, ce n'è una per le promozioni attivate e un'altra per le promozioni pubbliche.
+[Speaker 1] Ora io ho creato il task, andiamo a vedere che ho scritto.
+[Speaker 1] Ok, io li ho scomposto in due sezioni separate.
+[Speaker 1] perché in realtà
+[Speaker 1] Mi piacerebbe che Lorenzo lavori su questo e in realtà magari tu potresti lavorare su Not Joined.
+[Speaker 1] Quién tal me...
+[Speaker 1] più complesso. Ok? Perché? Ora vediamo per quale motivo.
+[Speaker 1] perché le not joined sono filtrabili e in linea di massima sulle not joined c'è la paginazione, che in realtà sulle joined non dovrebbe esserci, se mi ricordo bene.
+[Speaker 1] Okay.
+[Speaker 1] Questo perché in realtà tu attivando le...
+[Speaker 1] hai necessità di vederle tutte quelle che hai attivato queste che vedi qua sono quelle che non sono ancora scadute nel momento in cui scadono poi le trovi in un archivio che sarà parte di un'altra tasca quindi per ora concentriamoci
+[Speaker 1] per la tua attività su questo
+[Speaker 1] Dove sta la difficoltà? La difficoltà è che un componente esistente è stato scritto, secondo me, molto male, molto con i piedi.
+[Speaker 1] qui c'è una paginazione che è lato javascript
+[Speaker 1] 媽
+[Speaker 1] diventerà
+[Speaker 1] Una paginazione lato...
+[Speaker 1] lato back-end, lato server, ok?
+[Speaker 1] um
+[Speaker 1] Le chiamate le ho scritte qui nel task.
+[Speaker 1] Questo è il riferimento del JavaScript, questo è il riferimento del componente.
+[Speaker 1] Tu lavorerai sulle...
+[Speaker 1] promozioni non attivate.
+[Speaker 1] questo è il nome del metodo di quel promo service fatto di
+[Speaker 1] C'è un attimo il giro, poi se sono già cose che sai, poi passiamo avanti.
+[Speaker 1] questa è l'implementazione
+[Speaker 1] ok questa è l'implementazione ma chiaramente noi non ci riferiamo mai direttamente all'implementazione perché potrebbe essere sovrascritta diciamo sovrascritta o potrebbe essere sostituita da un'altra implementazione quello a cui noi normalmente facciamo riferimento è l'interfaccia perché il nostro componente i nostri componenti devono lavorare sulla base dell'interfaccia
+[Speaker 1] Quindi per quello che ti riguarda tu avrai questo riferimento Get Not Joined Promolista.
+[Speaker 1] a cui va passato un oggetto con i filtri e che ti ritorna sicuramente o un promolist.
+[Speaker 1] oppure nulla
+[Speaker 1] Okay.
+[Speaker 1] Ora, vediamo questo...
+[Speaker 1] Paramo lì, sì.
+[Speaker 1] E praticamente...
+[Speaker 1] un elemento del data model.
+[Speaker 1] che è questo qua
+[Speaker 1] come composto? È composto da un oggetto content che è un array di formo container.
+[Speaker 1] chiaramente è basato su
+[Speaker 1] Pages.
+[Speaker 1] Quindi se io in fase di richiesta...
+[Speaker 1] O que é isso aí?
+[Speaker 1] la prima pagina, pagina 0, di 10 elementi, size sarà 10.
+[Speaker 1] 點就費者
+[Speaker 1] una rete di 10 elementi, se ci sono, se non ci sono ne vedrò di meno.
+[Speaker 1] Okay.
+[Speaker 1] Tutto il resto serve per governare la paginazione.
+[Speaker 1] hai i total elements che sono
+[Speaker 1] il numero totale di promozioni a prescindere dalla paginazione.
+[Speaker 1] il numero di pagine
+[Speaker 1] che a noi interessa, ma in realtà non abbiamo la paginazione con i numerini, abbiamo solo il carico altro.
+[Speaker 1] che era quel tasto che hai visto prima su...
+[Speaker 1] What?
+[Speaker 1] Okay, so wait.
+[Speaker 1] Refreshing.
+[Speaker 1] Okay.
+[Speaker 1] Quindi non ci sono i numerini ma c'è questo.
+[Speaker 1] di caldo.
+[Speaker 1] chiaramente si vede fino a quando ci sono pagine.
+[Speaker 1] Poi abbiamo la possibilità di capire se siamo nella prima pagina o nell'ultima.
+[Speaker 1] Thank you.
+[Speaker 1] 對
+[Speaker 1] questo secondo me potrebbe essere un ottimo modo di creare un ottimo modo per creare un altro
+[Speaker 1] elemento
+[Speaker 1] uh,
+[Speaker 1] No, no, um...
+[Speaker 1] 以上
+[Speaker 1] Qual è il problema? Che Active Promotion è un file gigantesco.
+[Speaker 1] molto gigante.
+[Speaker 1] Okay.
+[Speaker 1] Es mejor sin...
+[Speaker 1] Esatto, non mi piace, quindi...
+[Speaker 1] la paginazione dei filtri dovrebbero essere in qualche modo
+[Speaker 1] separati ok? quindi c'è da fare un minimo di refactoring su questo componente in modo tale da
+[Speaker 1] separare i vari sottoclassi o sottoelementi
+[Speaker 1] Um...
+[Speaker 1] che possono essere in qualche modo riutilizzati. Dico in qualche modo perché purtroppo...
+[Speaker 1] No llevan siempre unos tesos.
+[Speaker 1] di presentare la paginazione cambia un po'.
+[Speaker 1] però a me piace che sia scomposto uno perché è più facile trovare la roba una volta che
+[Speaker 1] che qualcuno deve metterci mano.
+[Speaker 1] e Entrue è anche più facile perché se io devo lavorare sulla paginazione vado direttamente nel piccolo file
+[Speaker 1] riducendo il rischio che si spacchi qualcos'altro. Questo è quello che io vorrei ottenere da questa attività.
+[Speaker 1] Orada
+[Speaker 1] Vediamo ancora il data model.
+[Speaker 1] C'è in qualche modo tutta una serie di dati.
+[Speaker 1] che ormai sono di fatto uno standard quando parliamo
+[Speaker 1] di via del PPL backend
+[Speaker 1] e che possono essere passati
+[Speaker 1] in toto ha una
+[Speaker 1] a una classe, secondo me, che può occuparsi della paginazione.
+[Speaker 1] Um...
+[Speaker 1] Quindi dimostrare sostanzialmente in questo caso il caricaltro, in altri casi potrebbe mostrare le freccine.
+[Speaker 1] quello è un altro discorso quello dell'estetica mi interessa
+[Speaker 1] separare
+[Speaker 1] le responsabilità di queste sottoclassi che dovranno lavorare su questo.
+[Speaker 1] su questo componente.
+[Speaker 1] okay
+[Speaker 1] Fino a qui, non so se è chiaro un po' il concetto.
+[Speaker 1] La paginazione è strettamente legata anche al film.
+[Speaker 1] So.
+[Speaker 1] okay
+[Speaker 1] ora ti spiego un problema noto così
+[Speaker 1] se ti verrà in mente poi almeno saprai dare una risposta
+[Speaker 1] nel momento in cui io
+[Speaker 1] visualizzo le promozioni
+[Speaker 1] sono ordinate sulla base di un
+[Speaker 1] uh
+[Speaker 1] un ordinamento
+[Speaker 1] che non è selezionabile.
+[Speaker 1] perché qui puoi selezionare solo più recenti e meno recenti.
+[Speaker 1] Quello che vedi in realtà è un ordinamento su base settimanale, dove per ogni settimana ci stanno...
+[Speaker 1] determinati prodotti
+[Speaker 1] ¿Qué pasa?
+[Speaker 1] visualizzarsi prima degli altri esempio se a lunedì diciamo la settimana calcistica è passata faccio vedere prima
+[Speaker 1] che sono slot, bingo e altre rispetto a
+[Speaker 1] le promozioni sul calcio, sul betting. Poi magari arriva, che so, il giovedì, mostro quelle del calcio, poi che sta per arrivare la settimana. Questo era il concetto.
+[Speaker 1] Ora, questo ordinamento purtroppo non è più...
+[Speaker 1] non si può più utilizzare perché
+[Speaker 1] richiede che sia il CMSM a chiedere tutte le promozioni su cui puoi fare la filtro, che è proprio quello, il cambio architetturale che stiamo mettendo in piedi. Perciò abbandoneremo quello ordinamento in favore dei...
+[Speaker 1] dell'ordinamento più recenti o meno recenti.
+[Speaker 1] 會臨距離啊
+[Speaker 2] 因為你這裡啊
+[Speaker 1] Questo sarà l'unico modo che abbiamo per ordinare. Quindi quando tu poi lavorerai sull'ordinamento...
+[Speaker 1] passerai a vediamo qua
+[Speaker 1] Passez-la, il y a...
+[Speaker 1] all'ordinamento
+[Speaker 1] 然後然後然後然後
+[Speaker 1] crescente e decrescente.
+[Speaker 1] L'altro discorso è relativo al filtro. Il filtro è multiplo e sulla base dei prodotti.
+[Speaker 1] Okay.
+[Speaker 1] chiaramente qui nel momento in cui ci clicco
+[Speaker 1] mi dice quanti sono i risultati.
+[Speaker 1] senza fare chiamate, questo perché
+[Speaker 1] il filtro e l'altro javascript però noi stiamo passando al filtro lato backend quindi non possiamo sapere
+[Speaker 1] quanti risultati ci sono, a meno che di non fare effettivamente la chiamata.
+[Speaker 1] Per ora la evitiamo, poi al massimo ci appena l'Umbach e capiremo come procedere.
+[Speaker 1] um,
+[Speaker 1] um
+[Speaker 1] In linea di massima dobbiamo implementare questa...
+[Speaker 1] sulla base del...
+[Speaker 1] diciamo quindi quelle che sono le nuove specifiche e quindi nel momento in cui tu l'utente ci clicca qui
+[Speaker 1] Se seleziono tutti i giochi, di fatto non passo niente all'interno di...
+[Speaker 1] Product ID.
+[Speaker 1] Se invece voglio filtrare, selezionerò...
+[Speaker 1] poker, casino e bingo
+[Speaker 1] e ripasserò all'interno di
+[Speaker 1] Parleri di Product ID che serve come parametro di ingresso alla...
+[Speaker 1] Alla chiamata.
+[Speaker 1] chiaramente nel momento in cui
+[Speaker 1] That's it.
+[Speaker 1] Direzione più di... ok.
+[Speaker 1] In questo caso...
+[Speaker 1] Ci sono 13 risultati.
+[Speaker 1] In linea di massima qui non vedo paginazione, però se ne chiediamo, sono 13 i risultati, ma noi ne chiediamo...
+[Speaker 1] Page size di 10, chiaramente dobbiamo poi gestire il caricaltro compatibilmente con...
+[Speaker 1] uh,
+[Speaker 1] i prodotti che ha selezionato.
+[Speaker 1] Okay.
+[Speaker 1] 
+[Speaker 1] Oh,
+[Speaker 1] Allora,
+[Speaker 1] Per quanto riguarda
+[Speaker 1] um,
+[Speaker 1] Lo sviluppo qui del service
+[Speaker 1] e riferimento
+[Speaker 1] questo Promotion Service Factory
+[Speaker 1] a cui vanno passate delle opzioni.
+[Speaker 1] Le opzioni le abbiamo già inserite.
+[Speaker 1] um
+[Speaker 1] dentro
+[Speaker 1] front-end endpoint units.
+[Speaker 1] che sono queste qua
+[Speaker 1] Quindi linea di massima dovrebbe funzionare da solo.
+[Speaker 1] chiamando questa funzioncina
+[Speaker 1] Lui ti ritorna già un oggetto conforme alle opzioni.
+[Speaker 1] che il servizio si aspetta e il mino di massimo.
+[Speaker 1] potrebbe funzionare tutto.
+[Speaker 1] Okay.
+[Speaker 1] C'è, ci dovrebbe essere un esempio su quello che sta facendo Eliona, che è le esclusive.
+[Speaker 1] che non è questo, ma le ha creato un altro.
+[Speaker 1] exclusiva, cara, o Sérgio Veneno, o Sérgio...
+[Speaker 1] no me sonolocato a un coche
+[Speaker 1] Comunque, l'idea di Massima...
+[Speaker 1] basterebbe chiamare
+[Speaker 1] uh
+[Speaker 1] Frontend and Contributives, fare...
+[Speaker 1] Promotion V4 Config Service Option è una funzione
+[Speaker 1] Si ritorna ad un oggetto a cui poi tu lo passi a...
+[Speaker 1] Gatinsk, tanz di promotion service factory.
+[Speaker 1] lui poi ti dirà in uscita
+[Speaker 1] un'implementazione di questa interfaccia
+[Speaker 1] e a quel punto poi tu potrai utilizzare
+[Speaker 1] il metodo descritto qua
+[Speaker 1] che è Get Not Joined Promo Lister
+[Speaker 1] A ver.
+[Speaker 1] puoi passare i vari...
+[Speaker 1] e va di parà
+[Speaker 1] Okay.
+[Speaker 1] Questo 62 è il valore di default e in realtà anche questo andrebbe preso dal...
+[Speaker 1] and LID.
+[Speaker 1] 然後然後然後
+[Speaker 1] Ciao, Matti.
+[Speaker 1] c'è nell'ID, lo vediamo un attimo
+[Speaker 1] viene recuperato
+[Speaker 1] Eccolo qua.
+[Speaker 1] Taçan ne dediğimi unutmayın.
+[Speaker 1] e se si fa get channel edit
+[Speaker 1] Right.
+[Speaker 1] Questo è l'Affair Point Utensil che dicevo prima, qua si prenderà la funzioncina nuova che ti dà le opzioni.
+[Speaker 1] le opzioni poi si passano al servizio.
+[Speaker 1] Uh,
+[Speaker 1] Chiaramente ti assegno il task, se hai dei dubbi in merito all'architettura e cose da fare chiedi pure a me. Se sono in merito al singolo caso del servizio...
+[Speaker 1] servizio non risponde, ti dà un errore, vuoi capire qualcosina in più, vuoi chiedere un parere sui dati che ti tornano, cioè promo container, magari ti manca un pezzo, non ti manca qualche dato, dovrai recuperare i dati editoriali, cioè in realtà su questa lista editorial data tu avrai i dati editoriali da mostrare.
+[Speaker 1] Euh...
+[Speaker 1] Anche a Lorenzo che ha sviluppato questa parte. Lorenzo la teneva solo che la teneva in ferie questa settimana.
+[Speaker 1] um
+[Speaker 1] Cos'altro?
+[Speaker 1] effettivamente tu non hai sviluppato già questo progetto quindi
+[Speaker 1] cioè nel senso sono componenti già esistenti
+[Speaker 1] The
+[Speaker 1] io qui però ho scritto
+[Speaker 1] tutte le attività da fare, quindi il cambio architetturale.
+[Speaker 1] um,
+[Speaker 1] che ritornano un promorlista conforme a quello che abbiamo visto.
+[Speaker 1] è necessario passare l'autenticazione
+[Speaker 1] Su questo Lorenzo dovrebbe essere aggiornato.
+[Speaker 1] ti darà magari una diga
+[Speaker 1] che puoi aggiungere per
+[Speaker 1] siccome questa è una funzionalità che si dà a loggato
+[Speaker 1] Quindi bisogna passare il GVT che è richiesto per gestire l'autenticazione.
+[Speaker 1] e poi
+[Speaker 1] Ho scritto che...
+[Speaker 1] il cambio architetturale e poi qui c'è scritto che la risposta conterrà sia il
+[Speaker 1] della promozione sia ai dati editoriali
+[Speaker 1] dato editoriale che abbiamo visto esserci...
+[Speaker 1] Qui nel caso in cui è una lista, qui nel caso in cui è un dettaglio.
+[Speaker 1] Nel tuo caso è una lista, quindi troverai sotto lista editorial data di ogni promozione
+[Speaker 1] troverai
+[Speaker 1] un altro oggetto con l'immagine, il titolo, la descrizione.
+[Speaker 1] Questa cosa qua la dovresti trovare dentro Active Promotion HTML, dove c'è...
+[Speaker 1] Il template.
+[Speaker 1] Uh,
+[Speaker 1] Scusa, questo... aspetta, aspetta, questo è...
+[Speaker 1] 
+[Speaker 1] Tml che governa il...
+[Speaker 1] el componente
+[Speaker 1] poi in realtà ci dovrebbe essere
+[Speaker 1] Esatto.
+[Speaker 1] Questo qua è il template.
+[Speaker 1] che viene richiamato per ogni card.
+[Speaker 1] a cui vanno passati determinati dati, tipo l'immagine.
+[Speaker 1] l'informazione sul countdown
+[Speaker 1] um
+[Speaker 1] Questa cosa qua sono sicuro che...
+[Speaker 1] e Leona la sta già guardando.
+[Speaker 1] Nel momento in cui arrivi a questa parte, cioè quella di dover passare i dati che hai scaricato,
+[Speaker 1] a questo template puoi chiedere o a me
+[Speaker 1] Vay yonem.
+[Speaker 1] Okay.
+[Speaker 1] It's not bad.
+[Speaker 1] Per ora, vedete un po', cerca di fare un po', diciamo...
+[Speaker 1] la mappa di quello che è stato implementato.
+[Speaker 1] Tato, sou...
+[Speaker 1] active promotion
+[Speaker 1] Era un sacco di roba.
+[Speaker 1] Quindi prova insomma in qualche modo a...
+[Speaker 1] a prendere degli stili.
+[Speaker 1] con questa roba e poi al massimo se hai delle domande le guardiamo tutte insieme.
+[Speaker 1] Eh...

@@ -245,6 +245,12 @@ A convenience script is included at `scripts/run.sh`. It will:
 
 Usage examples:
 
+python3 -m venv .venv
+source .venv/bin/activate
+pip install httpx
+python script.py test_large.m4a output.txt --mode local --local-model large-v3 --diarize
+
+
 Install dependencies and start the web UI:
 ```bash
 bash scripts/run.sh --install --web

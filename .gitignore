@@ -8,3 +8,5 @@ mlx_models/
 web_runs/
 
 *.m4a
+
+.DS_Store

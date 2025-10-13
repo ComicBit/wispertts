@@ -16,6 +16,79 @@ Features
 from __future__ import annotations
 import argparse
 import itertools
+def ensure_mlx_download(tag: str, quant: Optional[str]):
+    """Ensure the MLX Hugging Face repo for `tag` is downloaded into ./mlx_models.
+
+    This tries to use `huggingface_hub.snapshot_download` when available. It's
+    safe to call even if the MLX python packages are not installed; it simply
+    attempts to populate the local `mlx_models/<model>` folder so MLX can use
+    a local repo copy later.
+    """
+    base = MLX_MODEL_MAP.get(tag, tag)
+    repo = globals().get("MLX_MODEL_REPOS", {}).get(base, f"mlx-community/whisper-{base}")
+    local_target = os.path.join(os.path.dirname(__file__), "mlx_models", base)
+
+    try:
+        from huggingface_hub import snapshot_download
+    except Exception:
+        log(f"[INFO] huggingface_hub not available; cannot pre-download MLX model '{base}'.")
+        return
+
+    # If a usable local model already exists, nothing to do.
+    if os.path.isdir(local_target) and os.path.isfile(os.path.join(local_target, "config.json")):
+        log(f"[INFO] MLX model '{base}' already present at {local_target}")
+        return
+
+    try:
+        log(f"[INFO] Ensuring MLX model '{base}' is available: {repo} → {local_target}")
+        snapshot_download(repo_id=repo, local_dir=local_target, local_dir_use_symlinks=False)
+        if os.path.isfile(os.path.join(local_target, "config.json")):
+            log(f"[INFO] MLX model '{base}' downloaded to {local_target}")
+        else:
+            log(f"[WARN] MLX model '{base}' download finished but config.json missing; MLX may still fetch from HF at runtime.")
+    except Exception as e:
+        log(f"[WARN] Could not pre-download MLX model '{repo}': {e}")
+
+
+def install_lightning_if_supported() -> bool:
+    """Try to install and import a Lightning MLX implementation if supported.
+
+    Returns True if Lightning became available, False otherwise. This will
+    attempt to pip-install `lightning-whisper-mlx` into the current Python
+    interpreter (using `sys.executable`) only when running on Apple Silicon.
+    """
+    global LightningWhisperMLX, _MLX_BACKEND
+    try:
+        importlib.invalidate_caches()
+        mod = importlib.import_module("lightning_whisper_mlx")
+        LightningWhisperMLX = getattr(mod, "LightningWhisperMLX", None) or mod.LightningWhisperMLX
+        _MLX_BACKEND = "lightning"
+        log("[INFO] lightning_whisper_mlx already importable")
+        return True
+    except Exception:
+        # Not importable yet; consider installing.
+        pass
+
+    if not is_apple_silicon():
+        log("[INFO] Automatic Lightning install skipped: not running on Apple Silicon")
+        return False
+
+    pkgs = ["lightning-whisper-mlx"]
+    for pkg in pkgs:
+        try:
+            log(f"[INFO] Attempting to pip install {pkg} into {sys.executable}")
+            subprocess.run([sys.executable, "-m", "pip", "install", pkg], check=True)
+            importlib.invalidate_caches()
+            mod = importlib.import_module("lightning_whisper_mlx")
+            LightningWhisperMLX = getattr(mod, "LightningWhisperMLX", None) or mod.LightningWhisperMLX
+            _MLX_BACKEND = "lightning"
+            log(f"[INFO] Successfully installed and imported {pkg}")
+            return True
+        except Exception as e:
+            log(f"[WARN] Could not install {pkg}: {e}")
+
+    return False
+
 import json
 import os
 import platform
@@ -30,6 +103,7 @@ from io import BytesIO
 from typing import Optional
 
 import httpx
+import importlib
 import torch
 try:
     from pydub import AudioSegment
@@ -51,6 +125,9 @@ MAX_MB, SAFETY, BITRATE = 25, 0.95, 128
 TARGET_BYTES = int(MAX_MB * 1_048_576 * SAFETY)
 SECONDS_LIMIT = int(TARGET_BYTES / (BITRATE / 8 * 1024))
 WHISPER_CACHE = os.path.join(os.path.dirname(__file__), "models", "whisper")
+
+# Regex used to parse ffmpeg/stderr progress lines like: time=00:01:23.45
+T_RE = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
 
 
 # ------------------------------ HELPERS -------------------------------------
@@ -118,14 +195,12 @@ def prefer_device() -> torch.device:
 
 def get_default_mode() -> str:
     """Get the default mode based on platform"""
+    # Prefer MLX on Apple Silicon so we prepare the MLX backend first.
+    # We do not attempt to import MLX here; the runtime will try to install
+    # or fall back as needed after the user's choice is resolved.
     if is_apple_silicon():
-        try:
-            # Test if MLX is available
-            import mlx.core as mx
-            return "mlx"
-        except ImportError:
-            pass
-    return "api"
+        return "mlx"
+    return "local"
 
 
 class Spinner:
@@ -150,11 +225,6 @@ class Spinner:
             sys.stdout.write(f"\r{self.desc} {ch}")
             sys.stdout.flush()
             time.sleep(0.1)
-
-
-# ------------------------------ FFMPEG --------------------------------------
-T_RE = re.compile(r"time=(\d{2}):(\d{2}):(\d{2}\.\d+)")
-
 
 def _dur(p):
     try:
@@ -348,7 +418,8 @@ except ImportError:
             "medium": "mlx-community/whisper-medium",
             "large": "mlx-community/whisper-large",
             "large-v2": "mlx-community/whisper-large-v2",
-            "large-v3": "mlx-community/whisper-large-v3",
+            # Note: MLX large-v3 repo uses the '-mlx' suffix on HF
+            "large-v3": "mlx-community/whisper-large-v3-mlx",
         }
 
         def _resolve_mlx_repo(tag: str, quant: Optional[str]) -> str:
@@ -358,17 +429,52 @@ except ImportError:
             if quant_suffix:
                 search_paths.append(os.path.join(MLX_MODEL_ROOT, f"{base}-{quant_suffix}"))
             search_paths.append(os.path.join(MLX_MODEL_ROOT, base))
-
             for path in search_paths:
                 if os.path.isdir(path):
-                    return path
+                    # Ensure the MLX model directory contains a config.json at top-level.
+                    cfg = os.path.join(path, "config.json")
+                    if os.path.isfile(cfg):
+                        return path
+                    # If config is not present but there's a huggingface cache, the
+                    # download may have started but not finished or files were
+                    # left in a .cache subtree. Treat this as "not ready" and
+                    # continue so we fall back to the HF repo string instead.
+                    cache_dir = os.path.join(path, ".cache", "huggingface")
+                    if os.path.isdir(cache_dir):
+                        log(
+                            f"[WARN] Found partial MLX model directory at {path} (contains .cache/huggingface) but missing top-level config.json.\n"
+                            "  The model download may be incomplete. Remove the folder or finish the download to use a local MLX model, or omit the local MLX directory to fetch from the Hugging Face repo."
+                        )
+                    else:
+                        log(f"[WARN] MLX model dir {path} is present but missing config.json")
 
             if quant_suffix:
                 log(
                     f"[WARN] MLX quant='{quant}' weights not found locally – using full precision."
                 )
 
-            return MLX_MODEL_REPOS.get(base, f"mlx-community/whisper-{base}")
+            # No usable local model path found. Prefer to download a local copy
+            # of the MLX HF repo into ./mlx_models/<base> so future runs don't
+            # need to stream weights. If huggingface_hub is available, try to
+            # snapshot_download the repo; otherwise return the HF repo string
+            # so mlx_whisper can fetch it on-demand.
+            repo = MLX_MODEL_REPOS.get(base, f"mlx-community/whisper-{base}")
+            local_target = os.path.join(MLX_MODEL_ROOT, base)
+            try:
+                from huggingface_hub import snapshot_download
+
+                log(f"[INFO] No local MLX model found for '{base}'. Attempting to download from {repo} → {local_target}")
+                # snapshot_download will create the folder; set use symlinks off to ensure portability
+                snapshot_download(repo_id=repo, local_dir=local_target, local_dir_use_symlinks=False)
+                if os.path.isfile(os.path.join(local_target, "config.json")):
+                    log(f"[INFO] MLX model '{base}' downloaded to {local_target}")
+                    return local_target
+                else:
+                    log(f"[WARN] Downloaded {repo} but config.json still missing; will use remote repo string")
+            except Exception as e:
+                log(f"[WARN] Could not download MLX model '{repo}' locally: {e}. Will use remote HF repo instead.")
+
+            return repo
 
         class LightningWhisperMLX:  # type: ignore[override]
             """Compatibility wrapper around mlx_whisper.transcribe."""
@@ -624,7 +730,7 @@ def diarize_tx(audio, *, mode, cli=None, mdl=None, lang):
     finally:
         buf.close()
 
-    limit = SECONDS_LIMIT * 1000
+    limit = int(SECONDS_LIMIT * 1000)
     full = audio
     jobs, spk_map, spk_idx, order = [], {}, 1, 0
     for turn, _, sp in diar.itertracks(yield_label=True):
@@ -632,11 +738,13 @@ def diarize_tx(audio, *, mode, cli=None, mdl=None, lang):
             continue
         spk_map.setdefault(sp, f"Speaker {spk_idx}")
         spk_idx = len(spk_map) + 1
-        segment = full[int(turn.start * 1000) : int(turn.end * 1000)]
-        for off in range(0, len(segment), limit):
+        start_ms = int(turn.start * 1000)
+        end_ms = int(turn.end * 1000)
+        segment = full[start_ms:end_ms]
+        for off in range(0, int(len(segment)), limit):
             part = segment[off : off + limit]
-            st = turn.start + off / 1000
-            ed = min(turn.end, st + len(part) / 1000)
+            st = turn.start + (off / 1000.0)
+            ed = min(turn.end, st + (len(part) / 1000.0))
             jobs.append((order, spk_map[sp], part, st, ed))
             order += 1
 
@@ -733,6 +841,7 @@ def run(
     show_ts,
     agg,
     trim_silence=True,
+    explicit_mode: bool = False,
 ):
     cli = mdl = None
     _emit_progress("prepare", 0, 1, label="Preparing transcription job")
@@ -750,16 +859,39 @@ def run(
     elif mode == "mlx":
         mdl = load_mlx(local_tag, batch_size=mlx_batch_size, quant=mlx_quant)
     else:  # local
-        try:
-            mdl = load_local(local_tag, prefer_device())
-        except _SparseMPSFallback as err:
-            if LightningWhisperMLX is None:
-                raise RuntimeError(
-                    "Sparse MPS kernels missing and no MLX backend available; install 'mlx'"
-                ) from err
+        # If MLX is available on the system and the user did not explicitly
+        # request local mode, prefer MLX and avoid calling `whisper.load_model`
+        # which would trigger a standard .pt download.
+        if LightningWhisperMLX is not None and not explicit_mode:
+            log("[INFO] MLX backend present; using MLX instead of downloading standard Whisper .pt")
             mode = "mlx"
-            log("[INFO] Using MLX backend for local transcription")
             mdl = load_mlx(local_tag, batch_size=mlx_batch_size, quant=mlx_quant)
+        else:
+            try:
+                mdl = load_local(local_tag, prefer_device())
+            except _SparseMPSFallback as err:
+                # Sparse MPS kernels are missing. Prefer MLX on Apple Silicon when
+                # available, but if the MLX model repository isn't present / is
+                # incomplete (for example missing `config.json`), fall back to a
+                # local CPU Whisper model so the user's downloaded `.pt` file can
+                # still be used.
+                if LightningWhisperMLX is None:
+                    raise RuntimeError(
+                        "Sparse MPS kernels missing and no MLX backend available; install 'mlx'"
+                    ) from err
+
+                # Try loading MLX first; if it raises (e.g., missing config.json
+                # in `mlx_models/<model>`), fall back to CPU local Whisper.
+                try:
+                    mode = "mlx"
+                    log("[INFO] Using MLX backend for local transcription")
+                    mdl = load_mlx(local_tag, batch_size=mlx_batch_size, quant=mlx_quant)
+                except Exception as e:
+                    log(f"[WARN] MLX model load failed: {e} — falling back to CPU local Whisper")
+                    mode = "local"
+                    # Load local model on CPU so the existing models/whisper/<tag>.pt
+                    # file (if present) is used instead of requiring an MLX repo.
+                    mdl = load_local(local_tag, torch.device("cpu"))
 
     _emit_progress("prepare", 1, 1, label="Transcription pipeline ready")
     mp3 = convert(infile)
@@ -817,6 +949,24 @@ def main():
         log("[WARN] MLX mode requested but not running on Apple Silicon. Falling back to API mode.")
         mode = "api"
     
+    # If the user explicitly asked for MLX, try to pre-download the HF repo
+    # into ./mlx_models so that the runtime has the expected MLX repo layout
+    # (config.json, weights.npz, etc.) available before any backend fallbacks.
+    if mode == "mlx":
+        try:
+            ensure_mlx_download(args.local_model, args.mlx_quant)
+        except Exception as e:
+            log(f"[WARN] Pre-download attempt for MLX model failed: {e}")
+    
+    # If MLX is requested but we don't have Lightning available yet, try to
+    # install it automatically (only on Apple Silicon) before falling back.
+    if mode == "mlx" and LightningWhisperMLX is None:
+        try:
+            if install_lightning_if_supported():
+                log("[INFO] Lightning backend installed and available; continuing with MLX mode")
+        except Exception as e:
+            log(f"[WARN] Automatic Lightning install attempt failed: {e}")
+
     if mode == "mlx" and LightningWhisperMLX is None:
         log("[WARN] MLX mode requested but Lightning Whisper MLX not available. Falling back to local mode.")
         mode = "local"
@@ -833,6 +983,7 @@ def main():
         show_ts=args.timestamps,
         agg=args.aggregate,
         trim_silence=not getattr(args, "skip_silence", False),
+        explicit_mode=(args.mode is not None),
     )
 
 
