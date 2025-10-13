@@ -730,21 +730,30 @@ def diarize_tx(audio, *, mode, cli=None, mdl=None, lang):
     finally:
         buf.close()
 
-    limit = int(SECONDS_LIMIT * 1000)
+    limit_ms = int(SECONDS_LIMIT * 1000)
     full = audio
+    if not isinstance(full.sample_width, int):
+        full = full.set_sample_width(int(round(full.sample_width)))
+    if not isinstance(full.frame_rate, int):
+        full = full.set_frame_rate(int(round(full.frame_rate)))
+    frame_rate = max(int(round(full.frame_rate)), 1)
+    samples_per_ms = frame_rate / 1000.0
+    limit_frames = max(int(round(limit_ms * samples_per_ms)), frame_rate)
     jobs, spk_map, spk_idx, order = [], {}, 1, 0
     for turn, _, sp in diar.itertracks(yield_label=True):
         if turn.end - turn.start < 0.11:
             continue
         spk_map.setdefault(sp, f"Speaker {spk_idx}")
         spk_idx = len(spk_map) + 1
-        start_ms = int(turn.start * 1000)
-        end_ms = int(turn.end * 1000)
-        segment = full[start_ms:end_ms]
-        for off in range(0, int(len(segment)), limit):
-            part = segment[off : off + limit]
-            st = turn.start + (off / 1000.0)
-            ed = min(turn.end, st + (len(part) / 1000.0))
+        start_frame = max(0, int(round(turn.start * frame_rate)))
+        end_frame = max(start_frame + 1, int(round(turn.end * frame_rate)))
+        for frame_off in range(start_frame, end_frame, limit_frames):
+            frame_end = min(end_frame, frame_off + limit_frames)
+            if frame_end <= frame_off:
+                continue
+            part = full.get_sample_slice(frame_off, frame_end)
+            st = frame_off / frame_rate
+            ed = frame_end / frame_rate
             jobs.append((order, spk_map[sp], part, st, ed))
             order += 1
 
